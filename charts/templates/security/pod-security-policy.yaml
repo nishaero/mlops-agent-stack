@@ -1,0 +1,16 @@
+{{- if .Values.security.podSecurityStandards.enabled }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "mlops-agent-stack.namespace" . }}
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    pod-security.kubernetes.io/enforce: {{ .Values.security.podSecurityStandards.enforce }}
+    pod-security.kubernetes.io/audit: {{ .Values.security.podSecurityStandards.audit }}
+    pod-security.kubernetes.io/warn: {{ .Values.security.podSecurityStandards.warn }}
+  annotations:
+    pod-security.kubernetes.io/enforce-version: {{ .Values.security.podSecurityStandards.enforceVersion }}
+    pod-security.kubernetes.io/audit-version: {{ .Values.security.podSecurityStandards.auditVersion }}
+    pod-security.kubernetes.io/warn-version: {{ .Values.security.podSecurityStandards.warnVersion }}
+{{- end }}

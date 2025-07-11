@@ -19,10 +19,45 @@ spec:
         component: ai-engine
     spec:
       serviceAccountName: {{ include "mlops-agent-stack.serviceAccountName" . }}-ai-engine
+      {{- if .Values.security.podSecurityContext.enabled }}
+      securityContext:
+        runAsNonRoot: {{ .Values.security.podSecurityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.security.podSecurityContext.runAsUser }}
+        runAsGroup: {{ .Values.security.podSecurityContext.runAsGroup }}
+        fsGroup: {{ .Values.security.podSecurityContext.fsGroup }}
+        fsGroupChangePolicy: {{ .Values.security.podSecurityContext.fsGroupChangePolicy }}
+      {{- end }}
+      {{- if .Values.aiEngine.affinity }}
+      affinity:
+        {{- toYaml .Values.aiEngine.affinity | nindent 8 }}
+      {{- else if .Values.global.affinity }}
+      affinity:
+        {{- toYaml .Values.global.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.aiEngine.tolerations }}
+      tolerations:
+        {{- toYaml .Values.aiEngine.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if .Values.aiEngine.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.aiEngine.nodeSelector | nindent 8 }}
+      {{- end }}
       containers:
       - name: ai-engine
         image: "{{ .Values.global.imageRegistry }}{{ .Values.aiEngine.image.repository }}:{{ .Values.aiEngine.image.tag }}"
         imagePullPolicy: {{ .Values.aiEngine.image.pullPolicy }}
+        {{- if .Values.security.containerSecurityContext.enabled }}
+        securityContext:
+          allowPrivilegeEscalation: {{ .Values.security.containerSecurityContext.allowPrivilegeEscalation }}
+          readOnlyRootFilesystem: {{ .Values.security.containerSecurityContext.readOnlyRootFilesystem }}
+          runAsNonRoot: {{ .Values.security.containerSecurityContext.runAsNonRoot }}
+          runAsUser: {{ .Values.security.containerSecurityContext.runAsUser }}
+          capabilities:
+            drop:
+              {{- range .Values.security.containerSecurityContext.capabilities.drop }}
+              - {{ . }}
+              {{- end }}
+        {{- end }}
         ports:
         - name: http
           containerPort: 8080
@@ -30,6 +65,30 @@ spec:
         - name: grpc
           containerPort: 9090
           protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: {{ .Values.aiEngine.probes.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.aiEngine.probes.liveness.periodSeconds }}
+          timeoutSeconds: {{ .Values.aiEngine.probes.liveness.timeoutSeconds }}
+          failureThreshold: {{ .Values.aiEngine.probes.liveness.failureThreshold }}
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: {{ .Values.aiEngine.probes.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.aiEngine.probes.readiness.periodSeconds }}
+          timeoutSeconds: {{ .Values.aiEngine.probes.readiness.timeoutSeconds }}
+          failureThreshold: {{ .Values.aiEngine.probes.readiness.failureThreshold }}
+        startupProbe:
+          httpGet:
+            path: /startup
+            port: http
+          initialDelaySeconds: {{ .Values.aiEngine.probes.startup.initialDelaySeconds }}
+          periodSeconds: {{ .Values.aiEngine.probes.startup.periodSeconds }}
+          timeoutSeconds: {{ .Values.aiEngine.probes.startup.timeoutSeconds }}
+          failureThreshold: {{ .Values.aiEngine.probes.startup.failureThreshold }}
         env:
         - name: LOG_LEVEL
           value: "INFO"

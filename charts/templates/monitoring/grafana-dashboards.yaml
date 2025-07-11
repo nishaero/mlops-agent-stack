@@ -1,0 +1,117 @@
+{{- if .Values.monitoring.grafana.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-grafana-dashboards
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  ai-metrics-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "MLOps AI Engine Metrics",
+        "tags": ["mlops", "ai", "machine-learning"],
+        "style": "dark",
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "AI Model Inference Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "rate(ai_model_inference_total[5m])",
+                "legendFormat": "Inferences/sec"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "green", "value": null},
+                    {"color": "yellow", "value": 50},
+                    {"color": "red", "value": 100}
+                  ]
+                }
+              }
+            },
+            "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Model Accuracy Over Time",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "ai_model_accuracy",
+                "legendFormat": "{{ "{{" }}model_name{{ "}}" }} Accuracy"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "min": 0,
+                "max": 1,
+                "unit": "percentunit"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 6, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Anomaly Detection Rate",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "rate(ai_anomalies_detected_total[5m])",
+                "legendFormat": "Anomalies/sec"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+          },
+          {
+            "id": 4,
+            "title": "Model Processing Latency",
+            "type": "heatmap",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(ai_model_processing_duration_seconds_bucket[5m]))",
+                "legendFormat": "95th percentile"
+              },
+              {
+                "expr": "histogram_quantile(0.50, rate(ai_model_processing_duration_seconds_bucket[5m]))",
+                "legendFormat": "50th percentile"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+          },
+          {
+            "id": 5,
+            "title": "GPU Utilization",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "nvidia_smi_utilization_gpu_ratio * 100",
+                "legendFormat": "GPU {{ "{{" }}gpu{{ "}}" }} - {{ "{{" }}pod{{ "}}" }}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "min": 0,
+                "max": 100,
+                "unit": "percent"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+          }
+        ],
+        "time": {"from": "now-1h", "to": "now"},
+        "refresh": "30s"
+      }
+    }
+{{- end }}

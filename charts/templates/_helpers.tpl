@@ -72,3 +72,10 @@ imagePullSecrets:
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Create the namespace name
+*/}}
+{{- define "mlops-agent-stack.namespace" -}}
+{{- default .Release.Namespace .Values.namespaceOverride }}
+{{- end }}

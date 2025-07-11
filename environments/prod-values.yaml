@@ -1,0 +1,131 @@
+# Production Environment Values
+# Override default values for production deployment
+
+global:
+  environment: "production"
+  clusterName: "mlops-prod"
+  region: "us-west-2"
+
+# Strict security for production
+security:
+  podSecurityStandards:
+    enabled: true
+    enforce: "restricted"
+  gatekeeper:
+    enabled: true
+    requireDigests: true
+  networkPolicies:
+    enabled: true
+  imageScanning:
+    enabled: true
+    failOnHigh: true
+    failOnCritical: true
+
+# AI Engine - Production settings
+aiEngine:
+  replicaCount: 3
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 60
+    targetMemoryUtilizationPercentage: 70
+  
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  
+  verticalPodAutoscaler:
+    enabled: true
+    updateMode: "Auto"
+  
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: component
+            operator: In
+            values:
+            - ai-engine
+        topologyKey: kubernetes.io/hostname
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: component
+              operator: In
+              values:
+              - ai-engine
+          topologyKey: topology.kubernetes.io/zone
+
+# Infrastructure Healer - Production settings
+infrastructureHealer:
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+  
+  config:
+    dryRun: false
+    maxActionsPerHour: 5
+    observationPeriod: "5m"
+
+# Code Autofix - Production settings
+codeAutofix:
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+  
+  github:
+    enabled: true
+  
+  config:
+    autoMerge:
+      enabled: false
+      maxRiskLevel: "low"
+
+# Monitoring - Production settings
+monitoring:
+  grafana:
+    enabled: true
+    admin:
+      passwordSecretName: "grafana-admin-prod"
+  
+  alertmanager:
+    enabled: true
+    replicaCount: 3
+
+# Backup - Production settings
+backup:
+  enabled: true
+  models:
+    schedule: "0 2 * * *"  # Daily at 2 AM
+  storage:
+    size: 100Gi
+    s3:
+      enabled: true
+      bucket: "mlops-prod-backups"
+  retention:
+    local: 3
+    remote: 30
+
+# Resource quotas for production
+global:
+  resourceQuota:
+    enabled: true
+    hard:
+      requests.cpu: "50"
+      requests.memory: 100Gi
+      requests.nvidia.com/gpu: "20"
+      limits.cpu: "100"
+      limits.memory: 200Gi
+      limits.nvidia.com/gpu: "20"
+
+# Testing disabled in production
+testing:
+  enabled: false

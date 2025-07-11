@@ -1,0 +1,106 @@
+# Development Environment Values
+# Override default values for development deployment
+
+global:
+  environment: "development"
+  clusterName: "mlops-dev"
+  region: "us-west-2"
+
+# Relaxed security for development
+security:
+  podSecurityStandards:
+    enabled: true
+    enforce: "baseline"
+  gatekeeper:
+    enabled: false
+  networkPolicies:
+    enabled: false
+  imageScanning:
+    enabled: true
+    failOnHigh: false
+    failOnCritical: true
+
+# AI Engine - Development settings
+aiEngine:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  
+  podDisruptionBudget:
+    enabled: false
+  
+  verticalPodAutoscaler:
+    enabled: false
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+      nvidia.com/gpu: 1
+    requests:
+      cpu: 500m
+      memory: 1Gi
+      nvidia.com/gpu: 1
+
+# Infrastructure Healer - Development settings
+infrastructureHealer:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  
+  config:
+    dryRun: true
+    maxActionsPerHour: 20
+
+# Code Autofix - Development settings
+codeAutofix:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  
+  config:
+    autoMerge:
+      enabled: false
+
+# Monitoring - Development settings
+monitoring:
+  grafana:
+    enabled: true
+  
+  alertmanager:
+    enabled: true
+    replicaCount: 1
+
+# Backup - Development settings (reduced frequency)
+backup:
+  enabled: true
+  models:
+    schedule: "0 4 * * 0"  # Weekly on Sunday at 4 AM
+  storage:
+    size: 20Gi
+  retention:
+    local: 1
+    remote: 7
+
+# Testing enabled in development
+testing:
+  enabled: true
+  performance:
+    enabled: true
+    requests: 50
+  security:
+    enabled: true
+  chaos:
+    enabled: false
+
+# Reduced resource quotas for development
+global:
+  resourceQuota:
+    enabled: true
+    hard:
+      requests.cpu: "10"
+      requests.memory: 20Gi
+      requests.nvidia.com/gpu: "5"
+      limits.cpu: "20"
+      limits.memory: 40Gi
+      limits.nvidia.com/gpu: "5"

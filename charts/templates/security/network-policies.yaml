@@ -1,0 +1,222 @@
+{{- if .Values.security.networkPolicies.enabled }}
+---
+# Default deny all ingress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-default-deny-ingress
+  namespace: {{ include "mlops-agent-stack.namespace" . }}
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+
+---
+# Default deny all egress traffic (except DNS)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-default-deny-egress
+  namespace: {{ include "mlops-agent-stack.namespace" . }}
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+---
+# Allow AI Engine communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine
+  namespace: {{ include "mlops-agent-stack.namespace" . }}
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: ai-engine
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from infrastructure healer and code autofix
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: infrastructure-healer
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: code-autofix
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow monitoring traffic
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: {{ .Values.monitoring.namespace | default "monitoring" }}
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9090
+  egress:
+  # Allow outbound to Kubernetes API
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6443
+  # Allow model downloading (HTTPS)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Allow Infrastructure Healer communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-infrastructure-healer
+  namespace: {{ include "mlops-agent-stack.namespace" . }}
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: infrastructure-healer
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow monitoring traffic
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: {{ .Values.monitoring.namespace | default "monitoring" }}
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9090
+  egress:
+  # Allow outbound to Kubernetes API
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6443
+  # Allow communication with AI Engine
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: ai-engine
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# Allow Code Autofix communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-code-autofix
+  namespace: {{ include "mlops-agent-stack.namespace" . }}
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: code-autofix
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow monitoring traffic
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: {{ .Values.monitoring.namespace | default "monitoring" }}
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9090
+  egress:
+  # Allow outbound to Kubernetes API
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6443
+  # Allow communication with AI Engine
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: ai-engine
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow GitHub/GitLab API access
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Allow Prometheus scraping
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-monitoring
+  namespace: {{ include "mlops-agent-stack.namespace" . }}
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "mlops-agent-stack.name" . }}
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow Prometheus to scrape metrics
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: {{ .Values.monitoring.namespace | default "monitoring" }}
+      podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9090
+  # Allow Grafana access
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: {{ .Values.monitoring.namespace | default "monitoring" }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: grafana
+    ports:
+    - protocol: TCP
+      port: 8080
+
+{{- end }}
