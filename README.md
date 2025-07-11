@@ -99,6 +99,350 @@ kubectl port-forward svc/grafana 3000:80 -n mlops-agent-stack
 
 Visit http://localhost:3000 (admin/your_password)
 
+## 🧪 Setup & Testing Guide
+
+### Pre-Deployment Checks
+
+Before deploying, verify your cluster meets the requirements:
+
+```bash
+# Check Kubernetes version (should be 1.24+)
+kubectl version --short
+
+# Check available resources (need 8GB+ RAM, 4+ CPU)
+kubectl top nodes
+
+# Check if you have a default storage class
+kubectl get storageclass
+
+# Verify Helm is installed (should be 3.12+)
+helm version --short
+```
+
+### Detailed Setup Instructions
+
+1. **Prepare Your Environment**
+   ```bash
+   # Clone and navigate to repository
+   git clone https://github.com/nishaero/mlops-agent-stack.git
+   cd mlops-agent-stack
+   
+   # Create environment configuration
+   cat > .env << EOF
+   export GITHUB_TOKEN="your_github_token_here"
+   export GRAFANA_ADMIN_PASSWORD="secure_password_123"
+   export NAMESPACE="mlops-agent-stack"
+   EOF
+   
+   # Load configuration
+   source .env
+   ```
+
+2. **Deploy the Stack**
+   ```bash
+   # Deploy with verification
+   ./scripts/deployment/deploy.sh --namespace $NAMESPACE
+   
+   # Or deploy with dry-run to check configuration first
+   ./scripts/deployment/deploy.sh --dry-run
+   ```
+
+3. **Verify Basic Deployment**
+   ```bash
+   # Check all pods are running (should show 6-8 pods)
+   kubectl get pods -n $NAMESPACE
+   
+   # Expected output:
+   # NAME                                        READY   STATUS    RESTARTS   AGE
+   # mlops-agent-stack-ai-engine-xxx             1/1     Running   0          2m
+   # mlops-agent-stack-code-autofix-xxx          1/1     Running   0          2m
+   # mlops-agent-stack-infrastructure-healer-xxx 1/1     Running   0          2m
+   # grafana-xxx                                 1/1     Running   0          2m
+   # prometheus-server-xxx                       1/1     Running   0          2m
+   ```
+
+### Simple Health Check Tests
+
+#### Test 1: Component Health Endpoints
+```bash
+# Check AI Engine health
+kubectl port-forward svc/mlops-agent-stack-ai-engine 8080:8080 -n $NAMESPACE &
+curl -f http://localhost:8080/health
+# Expected: {"status": "healthy", "timestamp": "..."}
+
+# Check Infrastructure Healer health  
+kubectl port-forward svc/mlops-agent-stack-infrastructure-healer 8081:8080 -n $NAMESPACE &
+curl -f http://localhost:8081/health
+
+# Check Code Autofix health
+kubectl port-forward svc/mlops-agent-stack-code-autofix 8082:8080 -n $NAMESPACE &
+curl -f http://localhost:8082/health
+
+# Stop port-forwards
+pkill -f "kubectl port-forward"
+```
+
+#### Test 2: Custom Resource Definitions
+```bash
+# Verify CRDs are installed
+kubectl get crd | grep mlops.ai
+# Expected output:
+# autofixpolicies.mlops.ai
+# cloudconfigs.mlops.ai  
+# infrahealingrules.mlops.ai
+
+# Create a test policy to verify CRD functionality
+kubectl apply -f - << EOF
+apiVersion: mlops.ai/v1
+kind: AutoFixPolicy
+metadata:
+  name: test-policy
+  namespace: $NAMESPACE
+spec:
+  enabled: false
+  repositories: []
+  autoMerge:
+    enabled: false
+EOF
+
+# Verify policy was created
+kubectl get autofixpolicies -n $NAMESPACE test-policy
+```
+
+#### Test 3: Metrics Collection
+```bash
+# Check Prometheus is collecting metrics
+kubectl port-forward svc/prometheus-server 9090:80 -n $NAMESPACE &
+sleep 5
+
+# Query for MLOps metrics
+curl -s "http://localhost:9090/api/v1/query?query=mlops_anomalies_detected_total" | grep -o '"status":"success"'
+# Expected: "status":"success"
+
+pkill -f "kubectl port-forward"
+```
+
+#### Test 4: Log Collection
+```bash
+# Check if logs are being collected
+kubectl logs -l app.kubernetes.io/name=mlops-agent-stack -n $NAMESPACE --tail=10
+
+# Check for specific startup messages
+kubectl logs -l component=ai-engine -n $NAMESPACE | grep -i "starting\|ready\|initialized"
+```
+
+### Automated Test Suite
+
+#### Quick Test Script (Recommended)
+```bash
+# Run the comprehensive test suite
+./scripts/test-deployment.sh
+
+# Run with custom namespace
+./scripts/test-deployment.sh --namespace my-mlops-stack
+
+# With extended timeout
+./scripts/test-deployment.sh --timeout 600
+```
+
+This script runs all tests automatically and provides a comprehensive report.
+
+#### Operator-Specific Validation
+```bash
+# Install aiohttp for the validation script
+pip install aiohttp
+
+# Validate all operators (requires port-forwarding)
+python scripts/validate-operators.py
+
+# With custom namespace and timeout
+python scripts/validate-operators.py --namespace my-mlops-stack --timeout 60
+
+# Save detailed results to file
+python scripts/validate-operators.py --output validation-results.json --verbose
+```
+
+#### Manual Integration Tests
+```bash
+# Install test dependencies
+pip install -r operators/ai-engine/requirements.txt pytest
+
+# Run unit tests for all operators
+python -m pytest operators/ -v
+# Expected: All tests should pass
+
+# Run integration tests using Helm
+helm test mlops-agent-stack -n $NAMESPACE
+# Expected: test-integration-xxx pod should complete successfully
+```
+
+#### Performance Verification Tests
+```bash
+# Test 5: AI Engine Processing
+# Create sample metrics data
+kubectl apply -f - << EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-metrics
+  namespace: $NAMESPACE
+data:
+  metrics.json: |
+    {
+      "timestamp": "$(date -Iseconds)",
+      "cpu_usage": 75.5,
+      "memory_usage": 60.2,
+      "pod_restarts": 0
+    }
+EOF
+
+# Check if AI engine processes the data (check logs)
+kubectl logs -l component=ai-engine -n $NAMESPACE --tail=20 | grep -i "processing\|analyzing"
+```
+
+#### Test 6: Infrastructure Healing Simulation
+```bash
+# Create a test deployment to trigger healing
+kubectl create deployment test-app --image=nginx --replicas=1 -n $NAMESPACE
+kubectl label deployment test-app mlops.ai/healing=enabled -n $NAMESPACE
+
+# Scale to trigger monitoring
+kubectl scale deployment test-app --replicas=5 -n $NAMESPACE
+
+# Check healing logs (should show observation period)
+kubectl logs -l component=infrastructure-healer -n $NAMESPACE --tail=20 | grep -i "observing\|scaling\|healing"
+
+# Cleanup test deployment
+kubectl delete deployment test-app -n $NAMESPACE
+```
+
+### Monitoring Dashboard Verification
+
+#### Access Grafana Dashboard
+```bash
+# Get Grafana admin password (if not set during deployment)
+kubectl get secret grafana-admin-secret -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d
+echo
+
+# Access Grafana
+kubectl port-forward svc/grafana 3000:80 -n $NAMESPACE
+# Visit http://localhost:3000
+# Login: admin / <your_password>
+
+# Expected dashboards:
+# - MLOps AI Metrics
+# - Infrastructure Health  
+# - Code Quality Metrics
+# - Security Dashboard
+```
+
+### Troubleshooting Common Issues
+
+#### Issue 1: Pods Not Starting
+```bash
+# Check events
+kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp'
+
+# Check pod logs
+kubectl describe pod -l app.kubernetes.io/name=mlops-agent-stack -n $NAMESPACE
+
+# Check resource limits
+kubectl top pods -n $NAMESPACE
+```
+
+#### Issue 2: Health Checks Failing
+```bash
+# Check service endpoints
+kubectl get endpoints -n $NAMESPACE
+
+# Verify network policies
+kubectl get networkpolicies -n $NAMESPACE
+
+# Test internal connectivity
+kubectl run debug --image=nicolaka/netshoot -it --rm --restart=Never -n $NAMESPACE -- /bin/bash
+# Then inside the pod: nslookup mlops-agent-stack-ai-engine
+```
+
+#### Issue 3: Metrics Not Collecting
+```bash
+# Check Prometheus targets
+kubectl port-forward svc/prometheus-server 9090:80 -n $NAMESPACE &
+# Visit http://localhost:9090/targets
+# All targets should be "UP"
+
+# Check ServiceMonitor resources
+kubectl get servicemonitor -n $NAMESPACE
+```
+
+#### Issue 4: Test Scripts Failing
+```bash
+# For test-deployment.sh issues:
+# Check prerequisites
+kubectl cluster-info
+helm version
+
+# For validate-operators.py issues:
+# Install missing dependencies
+pip install aiohttp
+
+# Check port-forwarding
+kubectl port-forward svc/mlops-agent-stack-ai-engine 8080:8080 -n $NAMESPACE &
+curl http://localhost:8080/health
+
+# Kill orphaned port-forwards
+pkill -f "kubectl port-forward"
+```
+
+#### Issue 5: Permission Errors
+```bash
+# Check RBAC permissions
+kubectl auth can-i get pods --namespace=$NAMESPACE
+kubectl auth can-i create configmaps --namespace=$NAMESPACE
+
+# Check service account
+kubectl get serviceaccount -n $NAMESPACE
+kubectl describe serviceaccount default -n $NAMESPACE
+```
+
+### Clean Test Environment
+```bash
+# Remove test resources
+kubectl delete configmap test-metrics -n $NAMESPACE --ignore-not-found
+kubectl delete autofixpolicy test-policy -n $NAMESPACE --ignore-not-found
+
+# For complete cleanup
+helm uninstall mlops-agent-stack -n $NAMESPACE
+kubectl delete namespace $NAMESPACE
+kubectl delete crd autofixpolicies.mlops.ai infrahealingrules.mlops.ai cloudconfigs.mlops.ai
+```
+
+### Quick Reference: Testing Commands
+
+| Test Type | Command | Expected Result |
+|-----------|---------|-----------------|
+| **🚀 Full Test Suite** | `./scripts/test-deployment.sh` | All tests pass ✅ |
+| **🔧 Operator Validation** | `python scripts/validate-operators.py` | All operators healthy ✅ |
+| **📊 Pod Health** | `kubectl get pods -n mlops-agent-stack` | All pods Running/Ready |
+| **💗 Component Health** | `curl http://localhost:8080/health` | `{"status": "healthy"}` |
+| **📈 Metrics** | `curl http://localhost:9090/metrics` | Prometheus metrics |
+| **📋 Logs** | `kubectl logs -f -l app.kubernetes.io/name=mlops-agent-stack -n mlops-agent-stack` | Live log output |
+| **⚙️ CRDs** | `kubectl get crd \| grep mlops.ai` | 3 CRDs listed |
+| **🧪 Integration** | `helm test mlops-agent-stack -n mlops-agent-stack` | Test pods succeed |
+
+### Expected Test Results Summary
+
+✅ **All pods running**: 6-8 pods in Running state  
+✅ **Health endpoints**: All return 200 OK with healthy status  
+✅ **CRDs functional**: Can create/read custom resources  
+✅ **Metrics collection**: Prometheus collecting MLOps metrics  
+✅ **Log aggregation**: Logs visible from all components  
+✅ **Unit tests**: All pytest tests pass  
+✅ **Integration tests**: Helm tests complete successfully  
+✅ **Grafana dashboards**: 4+ dashboards accessible  
+✅ **Healing functionality**: Logs show observation and action cycles  
+
+If any test fails, refer to the troubleshooting section above or check the [production operations guide](docs/production-operations.md).
+
 ## 📋 Core Components
 
 ### Custom Resource Definitions (CRDs)
