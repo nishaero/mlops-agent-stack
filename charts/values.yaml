@@ -1,0 +1,315 @@
+# Default values for mlops-agent-stack
+# This is a YAML-formatted file.
+
+global:
+  # Global configuration
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+  
+# AI Analysis Engine Configuration
+aiEngine:
+  enabled: true
+  image:
+    repository: mlops/ai-engine
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 2
+  
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+      nvidia.com/gpu: 1
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+      nvidia.com/gpu: 1
+  
+  models:
+    anomalyDetection:
+      enabled: true
+      modelPath: "/models/anomaly-lstm"
+      refreshInterval: "1h"
+    
+    logAnalysis:
+      enabled: true
+      modelPath: "/models/log-bert"
+      refreshInterval: "6h"
+    
+    codeRepair:
+      enabled: true
+      modelPath: "/models/codellama-7b"
+      refreshInterval: "24h"
+  
+  storage:
+    enabled: true
+    size: 50Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+
+# Infrastructure Healing Controller
+infrastructureHealer:
+  enabled: true
+  image:
+    repository: mlops/infra-healer
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  
+  config:
+    reconcileInterval: "30s"
+    dryRun: false
+    maxActionsPerHour: 10
+
+# Code Autofix Controller
+codeAutofix:
+  enabled: true
+  image:
+    repository: mlops/code-autofix
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  
+  github:
+    enabled: true
+    tokenSecretName: "github-token"
+    tokenSecretKey: "token"
+  
+  gitlab:
+    enabled: false
+    tokenSecretName: "gitlab-token"
+    tokenSecretKey: "token"
+
+# Data Collection Components
+dataCollection:
+  # Prometheus for metrics
+  prometheus:
+    enabled: true
+    server:
+      retention: "15d"
+      resources:
+        limits:
+          cpu: 2000m
+          memory: 8Gi
+        requests:
+          cpu: 1000m
+          memory: 4Gi
+    
+    nodeExporter:
+      enabled: true
+    
+    kubeStateMetrics:
+      enabled: true
+  
+  # Loki for logs
+  loki:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 100Gi
+    
+    config:
+      retention_period: "336h" # 14 days
+  
+  # FluentBit for log collection
+  fluentBit:
+    enabled: true
+    image:
+      repository: fluent/fluent-bit
+      tag: "2.2.0"
+    
+    config:
+      outputs:
+        loki:
+          enabled: true
+        elasticsearch:
+          enabled: false
+  
+  # OpenTelemetry for tracing
+  opentelemetry:
+    enabled: true
+    mode: "daemonset"
+    
+    config:
+      exporters:
+        jaeger:
+          enabled: true
+        prometheus:
+          enabled: true
+
+# GitOps Integration
+gitops:
+  # Flux CD
+  flux:
+    enabled: true
+    
+  # Argo Workflows for complex automations
+  argoWorkflows:
+    enabled: true
+    
+    controller:
+      resources:
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+        requests:
+          cpu: 500m
+          memory: 512Mi
+
+# Security and Policy
+security:
+  # Open Policy Agent
+  opa:
+    enabled: true
+    image:
+      repository: openpolicyagent/opa
+      tag: "0.58.0-envoy"
+    
+    policies:
+      autofix:
+        enabled: true
+        path: "/policies/autofix"
+      
+      infraHealing:
+        enabled: true
+        path: "/policies/infra-healing"
+  
+  # Kyverno for policy enforcement
+  kyverno:
+    enabled: true
+  
+  # RBAC configurations
+  rbac:
+    create: true
+    
+    serviceAccount:
+      create: true
+      annotations: {}
+      name: ""
+
+# Monitoring and Alerting
+monitoring:
+  # Grafana for visualization
+  grafana:
+    enabled: true
+    admin:
+      user: admin
+      passwordSecretName: "grafana-admin"
+      passwordSecretKey: "password"
+    
+    dashboards:
+      aiMetrics: true
+      infraHealth: true
+      codeQuality: true
+  
+  # AlertManager
+  alertmanager:
+    enabled: true
+    
+    config:
+      global:
+        slack_api_url_file: '/etc/alertmanager/slack-webhook'
+      
+      route:
+        group_by: ['alertname', 'cluster', 'service']
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 12h
+        receiver: 'default'
+      
+      receivers:
+      - name: 'default'
+        slack_configs:
+        - channel: '#mlops-alerts'
+          title: 'MLOps Alert'
+
+# Storage configuration
+storage:
+  # Persistent volume claims
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    
+    # AI models storage
+    models:
+      size: 100Gi
+    
+    # Metrics storage
+    metrics:
+      size: 200Gi
+    
+    # Logs storage
+    logs:
+      size: 500Gi
+
+# Networking
+networking:
+  # Service mesh (optional)
+  istio:
+    enabled: false
+  
+  # Load balancer configuration
+  loadBalancer:
+    enabled: true
+    type: "NodePort" # ClusterIP, NodePort, LoadBalancer
+    
+    annotations: {}
+    
+  # Ingress configuration
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+    
+    hosts:
+    - host: mlops-agent.local
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: mlops-agent-api
+            port:
+              number: 80
+
+# Node affinity and tolerations
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Auto-scaling
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80

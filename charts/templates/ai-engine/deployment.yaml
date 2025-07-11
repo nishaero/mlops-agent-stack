@@ -1,0 +1,86 @@
+{{- if .Values.aiEngine.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: ai-engine
+spec:
+  replicas: {{ .Values.aiEngine.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mlops-agent-stack.selectorLabels" . | nindent 6 }}
+      component: ai-engine
+  template:
+    metadata:
+      labels:
+        {{- include "mlops-agent-stack.selectorLabels" . | nindent 8 }}
+        component: ai-engine
+    spec:
+      serviceAccountName: {{ include "mlops-agent-stack.serviceAccountName" . }}-ai-engine
+      containers:
+      - name: ai-engine
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.aiEngine.image.repository }}:{{ .Values.aiEngine.image.tag }}"
+        imagePullPolicy: {{ .Values.aiEngine.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: grpc
+          containerPort: 9090
+          protocol: TCP
+        env:
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: MODELS_PATH
+          value: "/models"
+        - name: KUBECONFIG
+          value: "/etc/kubeconfig/config"
+        - name: PROMETHEUS_URL
+          value: "http://{{ include "mlops-agent-stack.fullname" . }}-prometheus-server"
+        - name: LOKI_URL
+          value: "http://{{ include "mlops-agent-stack.fullname" . }}-loki:3100"
+        volumeMounts:
+        - name: models
+          mountPath: /models
+        - name: config
+          mountPath: /etc/ai-engine
+        resources:
+          {{- toYaml .Values.aiEngine.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 5
+      volumes:
+      - name: models
+        {{- if .Values.aiEngine.storage.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "mlops-agent-stack.fullname" . }}-ai-models
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: config
+        configMap:
+          name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
