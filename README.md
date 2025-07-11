@@ -67,10 +67,67 @@ The MLOps Agent Stack is an intelligent, autonomous system that:
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Kubernetes cluster (v1.24+)
-- Helm 3.12+
-- kubectl configured
-- 8GB+ RAM, 4+ CPU cores
+
+#### Infrastructure Requirements
+- **Kubernetes cluster** (v1.24+)
+  - Minimum 3 nodes (for high availability)
+  - 8GB+ RAM per node, 4+ CPU cores per node
+  - 100GB+ available storage with a default StorageClass
+  - LoadBalancer support (cloud provider or MetalLB)
+  - CNI plugin with Network Policy support (e.g., Calico, Cilium)
+
+#### Command Line Tools
+- **kubectl** configured to access your cluster
+- **Helm** 3.12+ for package management
+- **Docker** or equivalent container runtime (for building custom images)
+- **Git** for repository operations
+
+#### Development Dependencies (if building from source)
+- **Python** 3.11+ with pip
+- **Node.js** 18+ and npm (for web dashboard components)
+- **Go** 1.19+ (for custom operators)
+
+#### Cloud & External Services
+- **Container Registry** access (Docker Hub, GitHub Container Registry, or cloud provider registry)
+- **GitHub/GitLab** account with API tokens (for automated PR creation)
+- **Prometheus/Grafana** compatible monitoring (or use included stack)
+
+#### Optional but Recommended
+- **Ingress Controller** (nginx, traefik) for external access
+- **Cert-Manager** for automatic TLS certificate management
+- **Backup solution** (Velero) for cluster backups
+- **Service Mesh** (Istio, Linkerd) for advanced traffic management
+
+### Environment Configuration
+
+Before installation, configure the required environment variables:
+
+```bash
+# Required: GitHub integration for automated PR creation
+export GITHUB_TOKEN="ghp_your_github_personal_access_token"
+
+# Required: Admin password for Grafana dashboard
+export GRAFANA_ADMIN_PASSWORD="secure_admin_password"
+
+# Optional: Custom container registry (defaults to ghcr.io)
+export CONTAINER_REGISTRY="your-registry.com"
+
+# Optional: Slack/Teams webhooks for notifications
+export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+export TEAMS_WEBHOOK_URL="https://outlook.office.com/webhook/..."
+
+# Optional: Custom namespace (defaults to mlops-agent-stack)
+export MLOPS_NAMESPACE="mlops-production"
+
+# Optional: Environment type for configuration selection
+export ENVIRONMENT="production"  # Options: development, staging, production
+
+# Optional: Enable debug logging
+export DEBUG_MODE="false"
+
+# Optional: Custom storage class
+export STORAGE_CLASS="fast-ssd"
+```
 
 ### Installation
 
