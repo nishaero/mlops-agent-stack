@@ -39,7 +39,7 @@ jobs:
       run: isort --check-only operators
     
     - name: Type check with mypy
-      run: mypy operators --ignore-missing-imports
+      run: ./scripts/run-mypy.sh
     
     - name: Run tests
       run: |
