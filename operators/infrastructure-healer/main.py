@@ -12,9 +12,11 @@ This component handles:
 import asyncio
 import logging
 import os
-from dataclasses import dataclass
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from statistics import mean, median
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -28,8 +30,88 @@ HEALING_DURATION = Histogram(
     "mlops_healing_duration_seconds", "Time spent on healing actions", ["action_type"]
 )
 ACTIVE_RULES = Gauge("mlops_active_healing_rules", "Number of active healing rules")
+OBSERVATION_DURATION = Histogram(
+    "mlops_observation_duration_seconds", "Time spent observing before action", ["resource_type"]
+)
+CONFIDENCE_SCORE = Gauge(
+    "mlops_action_confidence", "Confidence score for healing actions", ["action_type"]
+)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PodMetrics:
+    """Pod performance metrics over time"""
+    timestamp: datetime
+    cpu_usage: float = 0.0
+    memory_usage: float = 0.0
+    restart_count: int = 0
+    is_ready: bool = True
+    phase: str = "Running"
+    oom_killed: bool = False
+
+
+@dataclass
+class ObservationWindow:
+    """Rolling window of observations for a resource"""
+    resource_key: str
+    metrics: deque = field(default_factory=lambda: deque(maxlen=100))
+    last_action_time: Optional[datetime] = None
+    cooldown_period: timedelta = field(default_factory=lambda: timedelta(minutes=5))
+    
+    def add_metric(self, metric: PodMetrics) -> None:
+        """Add a new metric to the observation window"""
+        self.metrics.append(metric)
+    
+    def get_trend(self, metric_name: str, window_minutes: int = 10) -> Tuple[float, float]:
+        """Get trend analysis for a specific metric"""
+        cutoff_time = datetime.now() - timedelta(minutes=window_minutes)
+        recent_metrics = [m for m in self.metrics if m.timestamp >= cutoff_time]
+        
+        if len(recent_metrics) < 2:
+            return 0.0, 0.0  # slope, confidence
+        
+        values = [getattr(m, metric_name) for m in recent_metrics]
+        times = [(m.timestamp - recent_metrics[0].timestamp).total_seconds() 
+                for m in recent_metrics]
+        
+        # Simple linear regression for trend
+        n = len(values)
+        sum_x = sum(times)
+        sum_y = sum(values)
+        sum_xy = sum(x * y for x, y in zip(times, values))
+        sum_x2 = sum(x * x for x in times)
+        
+        if n * sum_x2 - sum_x * sum_x == 0:
+            return 0.0, 0.0
+        
+        slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
+        confidence = min(1.0, len(recent_metrics) / 10.0)  # More data = higher confidence
+        
+        return slope, confidence
+    
+    def is_in_cooldown(self) -> bool:
+        """Check if resource is in cooldown period"""
+        if not self.last_action_time:
+            return False
+        return datetime.now() - self.last_action_time < self.cooldown_period
+    
+    def get_stability_score(self) -> float:
+        """Calculate stability score based on recent metrics"""
+        if len(self.metrics) < 5:
+            return 0.5  # Neutral score for insufficient data
+        
+        recent_metrics = list(self.metrics)[-10:]  # Last 10 observations
+        
+        # Calculate variability in key metrics
+        restart_counts = [m.restart_count for m in recent_metrics]
+        ready_states = [m.is_ready for m in recent_metrics]
+        
+        restart_stability = 1.0 if len(set(restart_counts)) <= 1 else 0.5
+        ready_stability = sum(ready_states) / len(ready_states)
+        
+        return (restart_stability + ready_stability) / 2
 
 
 @dataclass
@@ -42,14 +124,202 @@ class HealingAction:
     parameters: Dict[str, Any]
     priority: int = 1  # 1=low, 2=medium, 3=high, 4=critical
     dry_run: bool = False
+    confidence_score: float = 0.0
+    observation_period: timedelta = field(default_factory=lambda: timedelta(minutes=3))
+    created_at: datetime = field(default_factory=datetime.now)
+    
+    def is_ready_to_execute(self) -> bool:
+        """Check if action has been observed long enough"""
+        return datetime.now() - self.created_at >= self.observation_period
+
+
+class PodObserver:
+    """Observes and tracks pod performance over time"""
+    
+    def __init__(self):
+        self.observations: Dict[str, ObservationWindow] = {}
+        self.min_observation_period = timedelta(minutes=2)
+    
+    def get_resource_key(self, namespace: str, name: str) -> str:
+        """Generate unique key for resource"""
+        return f"{namespace}/{name}"
+    
+    async def observe_pod(self, pod, namespace: str) -> PodMetrics:
+        """Collect current metrics for a pod"""
+        try:
+            metrics = PodMetrics(
+                timestamp=datetime.now(),
+                restart_count=sum(
+                    container.restart_count or 0
+                    for container in pod.status.container_statuses or []
+                ),
+                is_ready=(pod.status.phase == "Running"),
+                phase=pod.status.phase,
+                oom_killed=any(
+                    container.last_state
+                    and container.last_state.terminated
+                    and container.last_state.terminated.reason == "OOMKilled"
+                    for container in pod.status.container_statuses or []
+                )
+            )
+            
+            # Store observation
+            resource_key = self.get_resource_key(namespace, pod.metadata.name)
+            if resource_key not in self.observations:
+                self.observations[resource_key] = ObservationWindow(resource_key)
+            
+            self.observations[resource_key].add_metric(metrics)
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Failed to observe pod {pod.metadata.name}: {e}")
+            return PodMetrics(timestamp=datetime.now())
+    
+    def get_observation_window(self, namespace: str, name: str) -> Optional[ObservationWindow]:
+        """Get observation window for a resource"""
+        resource_key = self.get_resource_key(namespace, name)
+        return self.observations.get(resource_key)
+    
+    def cleanup_old_observations(self, max_age_hours: int = 24) -> None:
+        """Clean up old observation data"""
+        cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
+        
+        for window in self.observations.values():
+            # Remove old metrics
+            while window.metrics and window.metrics[0].timestamp < cutoff_time:
+                window.metrics.popleft()
+        
+        # Remove empty windows
+        empty_keys = [
+            key for key, window in self.observations.items() 
+            if not window.metrics
+        ]
+        for key in empty_keys:
+            del self.observations[key]
+
+
+class ActionPlanner:
+    """Plans and scores healing actions based on observations"""
+    
+    def __init__(self, observer: PodObserver):
+        self.observer = observer
+        self.pending_actions: List[HealingAction] = []
+    
+    def calculate_scaling_confidence(self, deployment_name: str, namespace: str, 
+                                   current_replicas: int, target_replicas: int) -> float:
+        """Calculate confidence score for scaling action"""
+        confidence = 0.5  # Base confidence
+        
+        # Get pods for this deployment
+        pods_pattern = f"{namespace}/{deployment_name}-"
+        related_windows = [
+            window for key, window in self.observer.observations.items()
+            if key.startswith(pods_pattern)
+        ]
+        
+        if not related_windows:
+            return confidence
+        
+        # Analyze stability across pods
+        stability_scores = [window.get_stability_score() for window in related_windows]
+        avg_stability = mean(stability_scores) if stability_scores else 0.5
+        
+        # Analyze trends
+        trend_scores = []
+        for window in related_windows:
+            restart_trend, trend_confidence = window.get_trend('restart_count')
+            if trend_confidence > 0.5:
+                # Increasing restarts = lower confidence in scaling down
+                if target_replicas < current_replicas and restart_trend > 0:
+                    trend_scores.append(0.3)
+                elif target_replicas > current_replicas and restart_trend > 0:
+                    trend_scores.append(0.8)
+                else:
+                    trend_scores.append(0.6)
+        
+        avg_trend_score = mean(trend_scores) if trend_scores else 0.5
+        
+        # Calculate final confidence
+        confidence = (avg_stability * 0.6 + avg_trend_score * 0.4)
+        
+        # Penalize large scaling changes
+        scale_factor = abs(target_replicas - current_replicas) / current_replicas
+        if scale_factor > 1.0:  # More than 100% change
+            confidence *= 0.7
+        
+        return min(1.0, max(0.1, confidence))
+    
+    def calculate_restart_confidence(self, pod_name: str, namespace: str) -> float:
+        """Calculate confidence score for pod restart action"""
+        window = self.observer.get_observation_window(namespace, pod_name)
+        if not window:
+            return 0.3  # Low confidence without observations
+        
+        if len(window.metrics) < 3:
+            return 0.4  # Low confidence with few observations
+        
+        # Check if restart count is consistently increasing
+        recent_metrics = list(window.metrics)[-5:]
+        restart_counts = [m.restart_count for m in recent_metrics]
+        
+        if len(set(restart_counts)) == 1:
+            return 0.2  # No restart pattern, low confidence
+        
+        # Check for consistent restart pattern
+        if restart_counts[-1] > restart_counts[0]:
+            return 0.8  # Clear restart pattern
+        
+        return 0.5
+    
+    def should_take_action(self, action: HealingAction) -> bool:
+        """Determine if an action should be taken based on confidence and cooldown"""
+        # Check cooldown period
+        if action.action_type.startswith('scale'):
+            deployment_name = action.target_resource.split('/')[-1]
+            # Check if any pods from this deployment are in cooldown
+            pods_pattern = f"{action.target_namespace}/{deployment_name}-"
+            for key, window in self.observer.observations.items():
+                if key.startswith(pods_pattern) and window.is_in_cooldown():
+                    return False
+        
+        # Check confidence threshold
+        min_confidence = {
+            'scale_up': 0.6,
+            'scale_down': 0.7,  # Higher threshold for scale down
+            'restart_pod': 0.5,
+            'increase_memory': 0.6,
+            'rollback': 0.8
+        }.get(action.action_type, 0.6)
+        
+        return action.confidence_score >= min_confidence
+    
+    def add_pending_action(self, action: HealingAction) -> None:
+        """Add action to pending list for observation"""
+        self.pending_actions.append(action)
+    
+    def get_ready_actions(self) -> List[HealingAction]:
+        """Get actions that are ready to execute"""
+        ready_actions = []
+        remaining_actions = []
+        
+        for action in self.pending_actions:
+            if action.is_ready_to_execute() and self.should_take_action(action):
+                ready_actions.append(action)
+            elif not action.is_ready_to_execute():
+                remaining_actions.append(action)
+            # Drop actions that don't meet confidence threshold
+        
+        self.pending_actions = remaining_actions
+        return ready_actions
 
 
 class InfrastructureHealer:
-    """Main Infrastructure Healing Controller"""
+    """Main Infrastructure Healing Controller with observation-based decision making"""
 
     def __init__(self):
         self.reconcile_interval = int(os.getenv("RECONCILE_INTERVAL", "30"))
         self.dry_run_mode = os.getenv("DRY_RUN", "false").lower() == "true"
+        self.observation_enabled = os.getenv("OBSERVATION_MODE", "true").lower() == "true"
 
         # Initialize Kubernetes client
         try:
@@ -63,13 +333,19 @@ class InfrastructureHealer:
         self.autoscaling_v1 = client.AutoscalingV1Api()
         self.custom_api = client.CustomObjectsApi()
 
-        # Healing state
+        # Enhanced healing components
+        self.observer = PodObserver()
+        self.action_planner = ActionPlanner(self.observer)
         self.active_rules = {}
         self.action_history = []
         self.last_actions = {}
+        
+        # Performance tracking
+        self.deployment_cache = {}
+        self.last_cache_update = datetime.now()
 
     async def get_healing_rules(self) -> List[Dict]:
-        """Get all InfraHealingRule resources"""
+        """Get all InfraHealingRule resources with caching"""
         try:
             rules = await self.custom_api.list_cluster_custom_object(
                 group="mlops.ai", version="v1", plural="infrahealingrules"
@@ -80,8 +356,68 @@ class InfrastructureHealer:
                 logger.error(f"Failed to get healing rules: {e}")
             return []
 
+    async def update_deployment_cache(self, namespace: str) -> None:
+        """Update cached deployment information for efficiency"""
+        try:
+            if namespace not in self.deployment_cache:
+                self.deployment_cache[namespace] = {}
+            
+            deployments = await self.apps_v1.list_namespaced_deployment(namespace=namespace)
+            for deployment in deployments.items:
+                self.deployment_cache[namespace][deployment.metadata.name] = {
+                    'replicas': deployment.spec.replicas or 1,
+                    'ready_replicas': deployment.status.ready_replicas or 0,
+                    'updated_at': datetime.now()
+                }
+        except ApiException as e:
+            logger.error(f"Failed to update deployment cache for {namespace}: {e}")
+
+    async def observe_and_analyze_pods(self, namespace: str, label_selector: str) -> Dict[str, Any]:
+        """Observe pods and analyze their performance trends"""
+        try:
+            pods = await self.core_v1.list_namespaced_pod(
+                namespace=namespace, label_selector=label_selector
+            )
+            
+            pod_analysis = {
+                'total_pods': len(pods.items),
+                'unhealthy_pods': 0,
+                'restart_trends': [],
+                'stability_scores': [],
+                'pods_ready': 0
+            }
+            
+            for pod in pods.items:
+                # Observe each pod
+                metrics = await self.observer.observe_pod(pod, namespace)
+                window = self.observer.get_observation_window(namespace, pod.metadata.name)
+                
+                # Analyze pod health
+                if not metrics.is_ready or metrics.restart_count > 3:
+                    pod_analysis['unhealthy_pods'] += 1
+                else:
+                    pod_analysis['pods_ready'] += 1
+                
+                # Get trend analysis if we have enough data
+                if window and len(window.metrics) >= 3:
+                    restart_trend, confidence = window.get_trend('restart_count')
+                    stability = window.get_stability_score()
+                    
+                    pod_analysis['restart_trends'].append({
+                        'pod': pod.metadata.name,
+                        'trend': restart_trend,
+                        'confidence': confidence
+                    })
+                    pod_analysis['stability_scores'].append(stability)
+            
+            return pod_analysis
+            
+        except ApiException as e:
+            logger.error(f"Failed to observe pods in {namespace}: {e}")
+            return {'total_pods': 0, 'unhealthy_pods': 0, 'restart_trends': [], 'stability_scores': [], 'pods_ready': 0}
+
     async def evaluate_pod_scaling(self, rule: Dict) -> List[HealingAction]:
-        """Evaluate if pod scaling is needed based on metrics"""
+        """Evaluate if pod scaling is needed based on observed metrics and trends"""
         actions: List[HealingAction] = []
         spec = rule.get("spec", {})
         scaling_config = spec.get("scaling", {}).get("pods", {})
@@ -95,14 +431,20 @@ class InfrastructureHealer:
 
         for namespace in namespaces:
             try:
+                # Update cache for efficiency
+                await self.update_deployment_cache(namespace)
+                
+                # Observe and analyze pod performance
+                pod_analysis = await self.observe_and_analyze_pods(namespace, label_selector)
+                
                 # Get deployments in namespace
                 deployments = await self.apps_v1.list_namespaced_deployment(
                     namespace=namespace, label_selector=label_selector
                 )
 
                 for deployment in deployments.items:
-                    action = await self.evaluate_deployment_scaling(
-                        deployment, scaling_config, rule
+                    action = await self.evaluate_deployment_scaling_with_observation(
+                        deployment, scaling_config, rule, pod_analysis
                     )
                     if action:
                         actions.append(action)
@@ -112,57 +454,60 @@ class InfrastructureHealer:
 
         return actions
 
-    async def evaluate_deployment_scaling(
-        self, deployment, scaling_config: Dict, rule: Dict
+    async def evaluate_deployment_scaling_with_observation(
+        self, deployment, scaling_config: Dict, rule: Dict, pod_analysis: Dict
     ) -> Optional[HealingAction]:
-        """Evaluate scaling for a specific deployment"""
+        """Evaluate scaling for a specific deployment using observation data"""
         try:
             name = deployment.metadata.name
             namespace = deployment.metadata.namespace
             current_replicas = deployment.spec.replicas or 1
-
-            # Get pod metrics (simplified - would use metrics API in production)
-            pods = await self.core_v1.list_namespaced_pod(
-                namespace=namespace, label_selector=f"app={name}"
-            )
-
-            # Analyze pod health
-            unhealthy_pods = 0
-            total_pods = len(pods.items)
-
-            for pod in pods.items:
-                if pod.status.phase != "Running":
-                    unhealthy_pods += 1
-                    continue
-
-                # Check restart count
-                restart_count = sum(
-                    container.restart_count or 0
-                    for container in pod.status.container_statuses or []
-                )
-
-                if restart_count > 5:  # High restart count indicates issues
-                    unhealthy_pods += 1
-
-            # Determine scaling action
-            unhealthy_ratio = unhealthy_pods / max(total_pods, 1)
+            ready_replicas = deployment.status.ready_replicas or 0
+            
+            # Calculate health ratio from observations
+            unhealthy_ratio = 0.0
+            if pod_analysis['total_pods'] > 0:
+                unhealthy_ratio = pod_analysis['unhealthy_pods'] / pod_analysis['total_pods']
+            
+            # Analyze trends for more intelligent decisions
+            avg_stability = 0.5
+            if pod_analysis['stability_scores']:
+                avg_stability = mean(pod_analysis['stability_scores'])
+            
+            # Get scaling parameters
             max_replicas = scaling_config.get("maxReplicas", 10)
             min_replicas = scaling_config.get("minReplicas", 1)
-
+            scale_up_threshold = float(scaling_config.get("scaleUpThreshold", "75%").rstrip('%')) / 100
+            scale_down_threshold = float(scaling_config.get("scaleDownThreshold", "25%").rstrip('%')) / 100
+            
             target_replicas = current_replicas
             action_type = None
-
-            if unhealthy_ratio > 0.5 and current_replicas < max_replicas:
-                # Scale up if more than 50% pods are unhealthy
-                target_replicas = min(current_replicas * 2, max_replicas)
+            observation_period = timedelta(minutes=3)
+            
+            # More conservative scaling based on observations
+            if unhealthy_ratio > scale_up_threshold and current_replicas < max_replicas:
+                # Scale up gradually - don't double replicas immediately
+                if avg_stability < 0.6:  # Low stability = more conservative scaling
+                    target_replicas = current_replicas + 1
+                else:
+                    target_replicas = min(current_replicas + max(1, current_replicas // 2), max_replicas)
                 action_type = "scale_up"
-            elif unhealthy_ratio < 0.1 and current_replicas > min_replicas:
-                # Scale down if less than 10% pods are unhealthy
-                target_replicas = max(current_replicas // 2, min_replicas)
-                action_type = "scale_down"
+                observation_period = timedelta(minutes=2)  # Faster for urgent scale up
+                
+            elif unhealthy_ratio < scale_down_threshold and current_replicas > min_replicas:
+                # Scale down only if stability is high
+                if avg_stability > 0.7 and ready_replicas == current_replicas:
+                    target_replicas = max(current_replicas - 1, min_replicas)
+                    action_type = "scale_down"
+                    observation_period = timedelta(minutes=5)  # Longer observation for scale down
 
             if action_type and target_replicas != current_replicas:
-                return HealingAction(
+                # Calculate confidence score
+                confidence = self.action_planner.calculate_scaling_confidence(
+                    name, namespace, current_replicas, target_replicas
+                )
+                
+                action = HealingAction(
                     action_type=action_type,
                     target_resource=f"deployment/{name}",
                     target_namespace=namespace,
@@ -170,12 +515,21 @@ class InfrastructureHealer:
                         "replicas": target_replicas,
                         "current_replicas": current_replicas,
                         "unhealthy_ratio": unhealthy_ratio,
+                        "stability_score": avg_stability,
+                        "ready_replicas": ready_replicas,
                     },
                     priority=3 if action_type == "scale_up" else 2,
+                    confidence_score=confidence,
+                    observation_period=observation_period,
                     dry_run=rule.get("spec", {})
                     .get("safeguards", {})
                     .get("dryRun", False),
                 )
+                
+                # Record confidence score metric
+                CONFIDENCE_SCORE.labels(action_type=action_type).set(confidence)
+                
+                return action
 
         except Exception as e:
             logger.error(
@@ -185,7 +539,7 @@ class InfrastructureHealer:
         return None
 
     async def evaluate_pod_health(self, rule: Dict) -> List[HealingAction]:
-        """Evaluate pod health and generate healing actions"""
+        """Evaluate pod health and generate healing actions with observation"""
         actions = []
         spec = rule.get("spec", {})
         health_config = spec.get("healthChecks", {}).get("pods", {})
@@ -201,7 +555,10 @@ class InfrastructureHealer:
                 )
 
                 for pod in pods.items:
-                    action = await self.evaluate_single_pod_health(
+                    # First observe the pod to collect metrics
+                    await self.observer.observe_pod(pod, namespace)
+                    
+                    action = await self.evaluate_single_pod_health_with_observation(
                         pod, health_config, rule
                     )
                     if action:
@@ -212,15 +569,18 @@ class InfrastructureHealer:
 
         return actions
 
-    async def evaluate_single_pod_health(
+    async def evaluate_single_pod_health_with_observation(
         self, pod, health_config: Dict, rule: Dict
     ) -> Optional[HealingAction]:
-        """Evaluate health of a single pod"""
+        """Evaluate health of a single pod using observation data"""
         try:
             name = pod.metadata.name
             namespace = pod.metadata.namespace
-
-            # Check restart count
+            
+            # Get observation window for this pod
+            window = self.observer.get_observation_window(namespace, name)
+            
+            # Check restart count with trend analysis
             restart_threshold = health_config.get("restartThreshold", 5)
             max_restart_count = 0
 
@@ -228,35 +588,64 @@ class InfrastructureHealer:
                 restart_count = container.restart_count or 0
                 max_restart_count = max(max_restart_count, restart_count)
 
+            # Use observation data to make smarter decisions
             if max_restart_count > restart_threshold:
-                action_type = health_config.get("crashLoopBackoffAction", "restart")
+                # Check if restart count is trending upward
+                should_restart = True
+                observation_period = timedelta(minutes=3)
+                
+                if window and len(window.metrics) >= 3:
+                    restart_trend, trend_confidence = window.get_trend('restart_count')
+                    stability_score = window.get_stability_score()
+                    
+                    # Only restart if there's a clear upward trend in restarts
+                    if restart_trend <= 0 or trend_confidence < 0.5:
+                        should_restart = False
+                    elif stability_score > 0.7:  # High stability = maybe transient issue
+                        observation_period = timedelta(minutes=5)  # Wait longer
+                
+                if should_restart:
+                    action_type = health_config.get("crashLoopBackoffAction", "restart")
+                    
+                    if action_type == "restart":
+                        confidence = self.action_planner.calculate_restart_confidence(name, namespace)
+                        
+                        return HealingAction(
+                            action_type="restart_pod",
+                            target_resource=f"pod/{name}",
+                            target_namespace=namespace,
+                            parameters={
+                                "restart_count": max_restart_count,
+                                "threshold": restart_threshold,
+                                "restart_trend": restart_trend if window else 0,
+                            },
+                            priority=3,
+                            confidence_score=confidence,
+                            observation_period=observation_period,
+                            dry_run=rule.get("spec", {})
+                            .get("safeguards", {})
+                            .get("dryRun", False),
+                        )
 
-                if action_type == "restart":
-                    return HealingAction(
-                        action_type="restart_pod",
-                        target_resource=f"pod/{name}",
-                        target_namespace=namespace,
-                        parameters={
-                            "restart_count": max_restart_count,
-                            "threshold": restart_threshold,
-                        },
-                        priority=3,
-                        dry_run=rule.get("spec", {})
-                        .get("safeguards", {})
-                        .get("dryRun", False),
-                    )
-
-            # Check for OOMKilled containers
+            # Check for OOMKilled containers with observation
             for container in pod.status.container_statuses or []:
                 if (
                     container.last_state
                     and container.last_state.terminated
                     and container.last_state.terminated.reason == "OOMKilled"
                 ):
+                    # Check if this is a pattern or one-off event
+                    oom_confidence = 0.8  # Default high confidence for OOM
+                    observation_period = timedelta(minutes=2)
+                    
+                    if window and len(window.metrics) >= 2:
+                        # Check recent OOM events
+                        recent_ooms = sum(1 for m in list(window.metrics)[-5:] if m.oom_killed)
+                        if recent_ooms <= 1:  # Only one recent OOM
+                            oom_confidence = 0.6
+                            observation_period = timedelta(minutes=4)
 
-                    action_type = health_config.get(
-                        "oomKilledAction", "increase-memory"
-                    )
+                    action_type = health_config.get("oomKilledAction", "increase-memory")
 
                     if action_type == "increase-memory":
                         return HealingAction(
@@ -266,8 +655,11 @@ class InfrastructureHealer:
                             parameters={
                                 "container": container.name,
                                 "reason": "OOMKilled",
+                                "recent_ooms": recent_ooms if window else 1,
                             },
                             priority=4,
+                            confidence_score=oom_confidence,
+                            observation_period=observation_period,
                             dry_run=rule.get("spec", {})
                             .get("safeguards", {})
                             .get("dryRun", False),
@@ -285,10 +677,11 @@ class InfrastructureHealer:
         return ",".join(f"{k}={v}" for k, v in labels.items())
 
     async def execute_healing_action(self, action: HealingAction) -> bool:
-        """Execute a healing action"""
+        """Execute a healing action with proper timing and observation"""
         if action.dry_run or self.dry_run_mode:
             logger.info(
-                f"DRY RUN: Would execute {action.action_type} on {action.target_resource}"
+                f"DRY RUN: Would execute {action.action_type} on {action.target_resource} "
+                f"(confidence: {action.confidence_score:.2f})"
             )
             HEALING_ACTIONS.labels(type=action.action_type, result="dry_run").inc()
             return True
@@ -296,11 +689,14 @@ class InfrastructureHealer:
         try:
             with HEALING_DURATION.labels(action_type=action.action_type).time():
                 success = False
+                
+                # Record observation duration
+                observation_time = datetime.now() - action.created_at
+                OBSERVATION_DURATION.labels(resource_type=action.action_type).observe(
+                    observation_time.total_seconds()
+                )
 
-                if (
-                    action.action_type == "scale_up"
-                    or action.action_type == "scale_down"
-                ):
+                if action.action_type in ["scale_up", "scale_down"]:
                     success = await self.execute_scaling_action(action)
                 elif action.action_type == "restart_pod":
                     success = await self.execute_pod_restart(action)
@@ -312,14 +708,24 @@ class InfrastructureHealer:
                 result = "success" if success else "failure"
                 HEALING_ACTIONS.labels(type=action.action_type, result=result).inc()
 
-                # Record action in history
+                # Record action in history with confidence score
                 self.action_history.append(
                     {
                         "timestamp": datetime.now().isoformat(),
                         "action": action,
                         "result": result,
+                        "confidence": action.confidence_score,
+                        "observation_duration": observation_time.total_seconds(),
                     }
                 )
+                
+                # Update cooldown for the target resource
+                if success and action.action_type.startswith('scale'):
+                    deployment_name = action.target_resource.split('/')[-1]
+                    pods_pattern = f"{action.target_namespace}/{deployment_name}-"
+                    for key, window in self.observer.observations.items():
+                        if key.startswith(pods_pattern):
+                            window.last_action_time = datetime.now()
 
                 return success
 
@@ -498,11 +904,20 @@ class InfrastructureHealer:
         return len(recent_actions) < max_actions
 
     async def process_healing_rules(self):
-        """Process all healing rules and generate actions"""
+        """Process all healing rules with observation-based decision making"""
         rules = await self.get_healing_rules()
         ACTIVE_RULES.set(len(rules))
 
-        all_actions = []
+        # Process pending actions that are ready to execute
+        if self.observation_enabled:
+            ready_actions = self.action_planner.get_ready_actions()
+            for action in ready_actions[:5]:  # Limit concurrent ready actions
+                success = await self.execute_healing_action(action)
+                if not success:
+                    logger.error(f"Failed to execute ready healing action: {action}")
+
+        # Generate new healing actions
+        new_actions = []
 
         for rule in rules:
             try:
@@ -516,26 +931,38 @@ class InfrastructureHealer:
                     )
                     continue
 
-                # Generate healing actions
+                # Generate healing actions with observation
                 scaling_actions = await self.evaluate_pod_scaling(rule)
                 health_actions = await self.evaluate_pod_health(rule)
 
-                all_actions.extend(scaling_actions)
-                all_actions.extend(health_actions)
+                new_actions.extend(scaling_actions)
+                new_actions.extend(health_actions)
 
             except Exception as e:
                 logger.error(
                     f"Failed to process rule {rule.get('metadata', {}).get('name', 'unknown')}: {e}"
                 )
 
-        # Sort actions by priority (highest first)
-        all_actions.sort(key=lambda x: x.priority, reverse=True)
+        # Sort actions by priority and confidence
+        new_actions.sort(key=lambda x: (x.priority, x.confidence_score), reverse=True)
 
-        # Execute actions
-        for action in all_actions[:10]:  # Limit concurrent actions
-            success = await self.execute_healing_action(action)
-            if not success:
-                logger.error(f"Failed to execute healing action: {action}")
+        # Add new actions to planner for observation or execute immediately if observation disabled
+        for action in new_actions[:10]:  # Limit new actions per cycle
+            if self.observation_enabled:
+                self.action_planner.add_pending_action(action)
+                logger.info(
+                    f"Added action to observation queue: {action.action_type} on {action.target_resource} "
+                    f"(confidence: {action.confidence_score:.2f}, observation: {action.observation_period})"
+                )
+            else:
+                # Execute immediately if observation is disabled
+                success = await self.execute_healing_action(action)
+                if not success:
+                    logger.error(f"Failed to execute immediate healing action: {action}")
+        
+        # Cleanup old observations periodically
+        if datetime.now().minute % 30 == 0:  # Every 30 minutes
+            self.observer.cleanup_old_observations()
 
     async def update_rule_status(self, rule: Dict, actions_taken: int):
         """Update the status of a healing rule"""
@@ -573,15 +1000,24 @@ class InfrastructureHealer:
             logger.error(f"Failed to update rule status: {e}")
 
     async def run(self):
-        """Main run loop"""
-        logger.info("Starting Infrastructure Healer")
+        """Main run loop with enhanced observation and efficiency"""
+        logger.info(
+            f"Starting Infrastructure Healer (observation_mode: {self.observation_enabled}, "
+            f"dry_run: {self.dry_run_mode})"
+        )
 
         # Start metrics server
         start_http_server(8080)
 
         while True:
             try:
+                loop_start = datetime.now()
                 await self.process_healing_rules()
+                
+                # Log performance metrics
+                loop_duration = (datetime.now() - loop_start).total_seconds()
+                logger.debug(f"Healing loop completed in {loop_duration:.2f}s")
+                
                 await asyncio.sleep(self.reconcile_interval)
             except Exception as e:
                 logger.error(f"Unexpected error in main loop: {e}")
