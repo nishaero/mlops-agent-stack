@@ -1,0 +1,228 @@
+{{- if .Values.security.opa.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-opa
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: opa
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "mlops-agent-stack.selectorLabels" . | nindent 6 }}
+      component: opa
+  template:
+    metadata:
+      labels:
+        {{- include "mlops-agent-stack.selectorLabels" . | nindent 8 }}
+        component: opa
+    spec:
+      containers:
+      - name: opa
+        image: "{{ .Values.security.opa.image.repository }}:{{ .Values.security.opa.image.tag }}"
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8181
+          protocol: TCP
+        args:
+        - "run"
+        - "--server"
+        - "--config-file=/config/config.yaml"
+        - "/policies"
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: policies
+          mountPath: /policies
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "mlops-agent-stack.fullname" . }}-opa-config
+      - name: policies
+        configMap:
+          name: {{ include "mlops-agent-stack.fullname" . }}-opa-policies
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-opa-config
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: opa
+data:
+  config.yaml: |
+    services:
+      authz:
+        url: http://localhost:8181
+    
+    bundles:
+      policies:
+        resource: "/policies"
+    
+    decision_logs:
+      console: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-opa-policies
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: opa-policies
+data:
+  autofix_policy.rego: |
+    package mlops.autofix
+
+    import future.keywords.if
+    import future.keywords.in
+
+    # Default deny
+    default allow = false
+
+    # Allow autofix actions based on risk level and file paths
+    allow if {
+        input.action == "create_pr"
+        input.risk_level in ["low", "medium"]
+        allowed_file_path
+        not excluded_file_path
+        valid_repository
+    }
+
+    # Allow dry-run actions
+    allow if {
+        input.action == "dry_run"
+    }
+
+    # Check if file path is allowed
+    allowed_file_path if {
+        count(input.policy.allowed_paths) == 0
+    }
+
+    allowed_file_path if {
+        some path in input.policy.allowed_paths
+        startswith(input.file_path, path)
+    }
+
+    # Check if file path is not excluded
+    excluded_file_path if {
+        some path in input.policy.excluded_paths
+        startswith(input.file_path, path)
+    }
+
+    # Validate repository
+    valid_repository if {
+        input.repository.url in input.policy.repositories[_].url
+    }
+
+    # Risk assessment
+    high_risk_action if {
+        input.risk_level == "high"
+        input.changes_count > 10
+    }
+
+    # Require approval for high-risk changes
+    requires_approval if {
+        high_risk_action
+    }
+
+    requires_approval if {
+        input.file_path in input.policy.require_approval[_]
+    }
+
+  infrastructure_policy.rego: |
+    package mlops.infrastructure
+
+    import future.keywords.if
+    import future.keywords.in
+
+    # Default deny
+    default allow = false
+
+    # Allow scaling actions within limits
+    allow if {
+        input.action in ["scale_up", "scale_down"]
+        valid_scaling_limits
+        not rate_limited
+        valid_namespace
+    }
+
+    # Allow restart actions for unhealthy pods
+    allow if {
+        input.action == "restart_pod"
+        input.restart_count > input.threshold
+        not rate_limited
+    }
+
+    # Allow memory increase for OOM killed pods
+    allow if {
+        input.action == "increase_memory"
+        input.reason == "OOMKilled"
+        not rate_limited
+    }
+
+    # Check scaling limits
+    valid_scaling_limits if {
+        input.action == "scale_up"
+        input.target_replicas <= input.policy.max_replicas
+    }
+
+    valid_scaling_limits if {
+        input.action == "scale_down"
+        input.target_replicas >= input.policy.min_replicas
+    }
+
+    # Check rate limiting
+    rate_limited if {
+        input.actions_last_hour >= input.policy.max_actions_per_hour
+    }
+
+    # Validate namespace
+    valid_namespace if {
+        input.namespace in input.policy.allowed_namespaces[_]
+    }
+
+    # Dry-run mode
+    dry_run_required if {
+        input.policy.dry_run_enabled
+        input.action in ["scale_up", "restart_pod", "increase_memory"]
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-opa
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: opa
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8181
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "mlops-agent-stack.selectorLabels" . | nindent 4 }}
+    component: opa
+{{- end }}

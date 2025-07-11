@@ -1,0 +1,88 @@
+{{- if .Values.codeAutofix.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-code-autofix
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: code-autofix
+spec:
+  replicas: {{ .Values.codeAutofix.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mlops-agent-stack.selectorLabels" . | nindent 6 }}
+      component: code-autofix
+  template:
+    metadata:
+      labels:
+        {{- include "mlops-agent-stack.selectorLabels" . | nindent 8 }}
+        component: code-autofix
+    spec:
+      serviceAccountName: {{ include "mlops-agent-stack.serviceAccountName" . }}-code-autofix
+      containers:
+      - name: code-autofix
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.codeAutofix.image.repository }}:{{ .Values.codeAutofix.image.tag }}"
+        imagePullPolicy: {{ .Values.codeAutofix.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        {{- if .Values.codeAutofix.github.enabled }}
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.codeAutofix.github.tokenSecretName }}
+              key: {{ .Values.codeAutofix.github.tokenSecretKey }}
+        {{- end }}
+        {{- if .Values.codeAutofix.gitlab.enabled }}
+        - name: GITLAB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.codeAutofix.gitlab.tokenSecretName }}
+              key: {{ .Values.codeAutofix.gitlab.tokenSecretKey }}
+        {{- end }}
+        volumeMounts:
+        - name: config
+          mountPath: /etc/code-autofix
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          {{- toYaml .Values.codeAutofix.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "mlops-agent-stack.fullname" . }}-code-autofix-config
+      - name: tmp
+        emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,61 @@
+apiVersion: mlops.ai/v1
+kind: InfraHealingRule
+metadata:
+  name: web-application-healing
+  namespace: default
+  labels:
+    app: web-application
+    tier: frontend
+spec:
+  enabled: true
+  scope:
+    namespaces:
+    - "default"
+    - "production"
+    labels:
+      app: "web-application"
+      tier: "frontend"
+  scaling:
+    pods:
+      enabled: true
+      maxReplicas: 20
+      minReplicas: 3
+      scaleUpThreshold: "75%"
+      scaleDownThreshold: "25%"
+      cooldownPeriod: "5m"
+    nodes:
+      enabled: false
+      maxNodes: 10
+      minNodes: 3
+      scaleUpCPUThreshold: "70%"
+      scaleUpMemoryThreshold: "80%"
+  healthChecks:
+    pods:
+      restartThreshold: 3
+      crashLoopBackoffAction: "restart"
+      oomKilledAction: "increase-memory"
+    nodes:
+      notReadyTimeout: "10m"
+      diskPressureThreshold: "85%"
+      memoryPressureThreshold: "90%"
+  rollback:
+    enabled: true
+    conditions:
+    - "high-error-rate"
+    - "performance-degradation"
+    - "health-check-failures"
+    maxRollbackAttempts: 3
+    rollbackTimeout: "5m"
+  notifications:
+    alertmanager:
+      enabled: true
+      severity: "warning"
+    webhook:
+      enabled: true
+      url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+  safeguards:
+    dryRun: false
+    requireApproval:
+    - "node-scaling"
+    - "production-rollback"
+    maxActionsPerHour: 5

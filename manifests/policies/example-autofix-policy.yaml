@@ -1,0 +1,48 @@
+apiVersion: mlops.ai/v1
+kind: AutoFixPolicy
+metadata:
+  name: example-autofix-policy
+  namespace: default
+  labels:
+    env: production
+    app: web-application
+spec:
+  enabled: true
+  repositories:
+  - url: "https://github.com/example/web-app"
+    branch: "main"
+    allowedPaths:
+    - "src/"
+    - "lib/"
+    - "config/"
+    excludedPaths:
+    - "src/secrets/"
+    - "config/prod/"
+  - url: "https://github.com/example/api-service"
+    branch: "develop"
+    allowedPaths:
+    - "api/"
+    - "models/"
+    excludedPaths:
+    - "api/admin/"
+  autoMerge:
+    enabled: false
+    conditions:
+    - "tests-pass"
+    - "security-scan-clean"
+    - "peer-review-approved"
+    maxRiskLevel: "low"
+  notifications:
+    slack:
+      enabled: true
+      webhook: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+      channel: "#devops-alerts"
+    teams:
+      enabled: false
+  riskAssessment:
+    maxChangesPerPR: 5
+    requireApproval:
+    - "*.sql"
+    - "*/migrations/*"
+    - "config/production/*"
+    dryRunFirst: true
