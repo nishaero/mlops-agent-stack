@@ -1,4 +1,4 @@
-{{- if .Values.security.podSecurityStandards.enabled }}
+{{- if and .Values.security.podSecurityStandards.enabled (ne (include "mlops-agent-stack.namespace" .) "default") }}
 ---
 apiVersion: v1
 kind: Namespace

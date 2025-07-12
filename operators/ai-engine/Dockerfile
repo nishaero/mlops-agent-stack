@@ -15,7 +15,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY main.py .
-COPY models/ ./models/
+COPY __init__.py .
+
+# Create models directory for AI models
+RUN mkdir -p models
 
 # Create non-root user
 RUN useradd -r -u 1001 mlops && \
