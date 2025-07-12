@@ -17,8 +17,13 @@ sys.modules["kubernetes.client"] = MagicMock()
 sys.modules["kubernetes.client.rest"] = MagicMock()
 sys.modules["prometheus_client"] = MagicMock()
 
-from main import (ActionPlanner, HealingAction, ObservationWindow, PodMetrics,
-                  PodObserver)
+from main import (
+    ActionPlanner,
+    HealingAction,
+    ObservationWindow,
+    PodMetrics,
+    PodObserver,
+)
 
 
 class TestPodMetrics(unittest.TestCase):
