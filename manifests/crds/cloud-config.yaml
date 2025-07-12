@@ -1,0 +1,233 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: cloudconfigs.mlops.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.13.0
+spec:
+  group: mlops.ai
+  names:
+    kind: CloudConfig
+    listKind: CloudConfigList
+    plural: cloudconfigs
+    singular: cloudconfig
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              provider:
+                type: string
+                enum: ["aws", "azure", "gcp", "digitalocean", "custom"]
+                description: "Cloud provider type"
+              region:
+                type: string
+                description: "Cloud provider region"
+              credentials:
+                type: object
+                properties:
+                  secretRef:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                    required:
+                    - name
+                description: "Reference to secret containing cloud credentials"
+              nodeGroups:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    instanceType:
+                      type: string
+                      description: "Instance type (e.g., t3.medium, Standard_DS2_v2)"
+                    minSize:
+                      type: integer
+                      default: 1
+                    maxSize:
+                      type: integer
+                      default: 10
+                    desiredSize:
+                      type: integer
+                      default: 3
+                    diskSize:
+                      type: integer
+                      default: 50
+                      description: "Disk size in GB"
+                    labels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    taints:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          key:
+                            type: string
+                          value:
+                            type: string
+                          effect:
+                            type: string
+                            enum: ["NoSchedule", "PreferNoSchedule", "NoExecute"]
+                    spotInstances:
+                      type: boolean
+                      default: false
+                      description: "Enable spot instances for cost optimization"
+                  required:
+                  - name
+                  - instanceType
+              networking:
+                type: object
+                properties:
+                  vpcId:
+                    type: string
+                    description: "VPC/VNET ID for cluster networking"
+                  subnetIds:
+                    type: array
+                    items:
+                      type: string
+                    description: "Subnet IDs for node placement"
+                  securityGroupIds:
+                    type: array
+                    items:
+                      type: string
+                    description: "Security group IDs"
+                  loadBalancer:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      type:
+                        type: string
+                        enum: ["classic", "network", "application"]
+                        default: "application"
+                      annotations:
+                        type: object
+                        additionalProperties:
+                          type: string
+              monitoring:
+                type: object
+                properties:
+                  cloudWatch:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: false
+                      logGroups:
+                        type: array
+                        items:
+                          type: string
+                  azureMonitor:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: false
+                      workspaceId:
+                        type: string
+                  stackdriver:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: false
+                      projectId:
+                        type: string
+              backup:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: true
+                  schedule:
+                    type: string
+                    default: "0 2 * * *"
+                    description: "Backup schedule in cron format"
+                  retention:
+                    type: string
+                    default: "30d"
+                    description: "Backup retention period"
+                  crossRegion:
+                    type: boolean
+                    default: false
+                    description: "Enable cross-region backup replication"
+            required:
+            - provider
+            - region
+            - credentials
+            - nodeGroups
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum: ["Pending", "Provisioning", "Ready", "Failed", "Deleting"]
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+              nodeGroupStatus:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    phase:
+                      type: string
+                    readyNodes:
+                      type: integer
+                    desiredNodes:
+                      type: integer
+              lastSync:
+                type: string
+                format: date-time
+    additionalPrinterColumns:
+    - name: Provider
+      type: string
+      jsonPath: .spec.provider
+    - name: Region
+      type: string
+      jsonPath: .spec.region
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Node-Groups
+      type: integer
+      jsonPath: .spec.nodeGroups[*]
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp

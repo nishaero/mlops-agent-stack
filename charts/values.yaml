@@ -1,0 +1,739 @@
+# Default values for mlops-agent-stack
+# This is a YAML-formatted file.
+
+global:
+  # Global configuration
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+  
+  # Production configuration
+  environment: "production"  # development, staging, production
+  clusterName: "mlops-prod"
+  region: "us-west-2"
+  
+  # Namespace configuration
+  namespace:
+    # Namespace where the MLOps stack is deployed
+    deployment: "mlops-system"
+    # Create the deployment namespace if it doesn't exist
+    create: true
+    
+  # Monitoring configuration - which namespaces to monitor
+  monitoring:
+    # List of namespaces to monitor for infrastructure healing
+    # If empty, all namespaces will be monitored
+    namespaces: []
+    # Examples:
+    # namespaces: ["default", "production", "staging"]
+    
+    # Global exclusion rules - applies to all healing rules
+    exclusions:
+      # Exclude deployments with these labels
+      labels: {}
+      # Example: 
+      # labels:
+      #   "mlops.ai/exclude": "true"
+      #   "app.kubernetes.io/managed-by": "helm"
+      
+      # Exclude deployments with these annotations  
+      annotations: {}
+      # Example:
+      # annotations:
+      #   "deployment.kubernetes.io/exclude-healing": "true"
+      
+      # Exclude deployments by name patterns (regex supported)
+      deploymentNames: []
+      # Example:
+      # deploymentNames: ["^kube-.*", ".*-system$", "external-.*"]
+      
+      # Exclude entire namespaces from monitoring
+      namespaces: ["kube-system", "kube-public", "kube-node-lease"]
+  
+  # High availability settings
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+              - mlops-agent-stack
+          topologyKey: kubernetes.io/hostname
+      - weight: 50
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+              - mlops-agent-stack
+          topologyKey: topology.kubernetes.io/zone
+  
+  # Resource quotas and limits
+  resourceQuota:
+    enabled: true
+    hard:
+      requests.cpu: "20"
+      requests.memory: 40Gi
+      requests.nvidia.com/gpu: "10"
+      limits.cpu: "40"
+      limits.memory: 80Gi
+      limits.nvidia.com/gpu: "10"
+      persistentvolumeclaims: "20"
+  
+  # Network policies
+  networkPolicy:
+    enabled: true
+    defaultDeny: true
+  
+# AI Analysis Engine Configuration
+aiEngine:
+  enabled: true
+  image:
+    repository: mlops/ai-engine
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 2
+  
+  # High Availability Configuration
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+            - key: component
+              operator: In
+              values:
+              - ai-engine
+          topologyKey: kubernetes.io/hostname
+  
+  tolerations: []
+  nodeSelector: {}
+  
+  # Pod Disruption Budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    # maxUnavailable: 1  # Alternative to minAvailable
+  
+  # Horizontal Pod Autoscaling
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    targetGPUUtilizationPercentage: 80
+    
+    # Advanced scaling behavior
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        selectPolicy: Min
+        percentPolicy:
+          value: 10
+          periodSeconds: 60
+        podsPolicy:
+          value: 1
+          periodSeconds: 60
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        selectPolicy: Max
+        percentPolicy:
+          value: 50
+          periodSeconds: 60
+        podsPolicy:
+          value: 2
+          periodSeconds: 60
+    
+    # Custom metrics for scaling
+    customMetrics: []
+    # - name: ai_inference_requests_per_second
+    #   labels:
+    #     service: ai-engine
+    #   target:
+    #     type: AverageValue
+    #     averageValue: "100"
+  
+  # Vertical Pod Autoscaling
+  verticalPodAutoscaler:
+    enabled: false  # Requires VPA to be installed in cluster
+    updateMode: "Auto"  # Auto, Recreate, or Off
+    minAllowed:
+      cpu: 100m
+      memory: 128Mi
+    maxAllowed:
+      cpu: 4000m
+      memory: 8Gi
+  
+  # Health Probes
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+    startup:
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30
+  
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+      nvidia.com/gpu: 1
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+      nvidia.com/gpu: 1
+  
+  models:
+    anomalyDetection:
+      enabled: true
+      modelPath: "/models/anomaly-lstm"
+      refreshInterval: "1h"
+    
+    logAnalysis:
+      enabled: true
+      modelPath: "/models/log-bert"
+      refreshInterval: "6h"
+    
+    codeRepair:
+      enabled: true
+      modelPath: "/models/codellama-7b"
+      refreshInterval: "24h"
+  
+  storage:
+    enabled: true
+    size: 50Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+
+# Infrastructure Healing Controller
+infrastructureHealer:
+  enabled: true
+  image:
+    repository: mlops/infra-healer
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  
+  config:
+    reconcileInterval: "30s"
+    dryRun: false
+    maxActionsPerHour: 10
+    
+    # Namespace-specific configuration
+    monitoring:
+      # Override global monitoring namespaces for this component
+      # If empty, uses global.monitoring.namespaces
+      namespaces: []
+      
+      # Component-specific exclusion rules
+      exclusions:
+        # Additional labels to exclude (merged with global)
+        labels: {}
+        # Additional annotations to exclude (merged with global)  
+        annotations: {}
+        # Additional deployment name patterns to exclude (merged with global)
+        deploymentNames: []
+        # Additional namespaces to exclude (merged with global)
+        namespaces: []
+
+# Code Autofix Controller
+codeAutofix:
+  enabled: true
+  image:
+    repository: mlops/code-autofix
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  
+  github:
+    enabled: true
+    tokenSecretName: "github-token"
+    tokenSecretKey: "token"
+  
+  gitlab:
+    enabled: false
+    tokenSecretName: "gitlab-token"
+    tokenSecretKey: "token"
+
+# Data Collection Components
+dataCollection:
+  # Prometheus for metrics
+  prometheus:
+    enabled: true
+    server:
+      retention: "15d"
+      resources:
+        limits:
+          cpu: 2000m
+          memory: 8Gi
+        requests:
+          cpu: 1000m
+          memory: 4Gi
+    
+    nodeExporter:
+      enabled: true
+    
+    kubeStateMetrics:
+      enabled: true
+  
+  # Loki for logs
+  loki:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 100Gi
+    
+    config:
+      retention_period: "336h" # 14 days
+  
+  # FluentBit for log collection
+  fluentBit:
+    enabled: true
+    image:
+      repository: fluent/fluent-bit
+      tag: "2.2.0"
+    
+    config:
+      outputs:
+        loki:
+          enabled: true
+        elasticsearch:
+          enabled: false
+  
+  # OpenTelemetry for tracing
+  opentelemetry:
+    enabled: true
+    mode: "daemonset"
+    
+    config:
+      exporters:
+        jaeger:
+          enabled: true
+        prometheus:
+          enabled: true
+
+# GitOps Integration
+gitops:
+  # Flux CD
+  flux:
+    enabled: true
+    
+  # Argo Workflows for complex automations
+  argoWorkflows:
+    enabled: true
+    
+    controller:
+      resources:
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+        requests:
+          cpu: 500m
+          memory: 512Mi
+
+# Security and Policy
+security:
+  # Pod Security Standards (PSS)
+  podSecurityStandards:
+    enabled: true
+    enforce: "restricted"
+    audit: "restricted" 
+    warn: "restricted"
+    enforceVersion: "v1.28"
+    auditVersion: "v1.28"
+    warnVersion: "v1.28"
+  
+  # Pod Security Context
+  podSecurityContext:
+    enabled: true
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    fsGroupChangePolicy: "OnRootMismatch"
+  
+  # Container Security Context
+  containerSecurityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65534
+    capabilities:
+      drop:
+        - "ALL"
+  
+  # Network Policies
+  networkPolicies:
+    enabled: true
+  
+  # Open Policy Agent Gatekeeper
+  gatekeeper:
+    enabled: true
+    allowedRegistries:
+      - "ghcr.io"
+      - "docker.io"
+      - "quay.io"
+      - "gcr.io"
+      - "registry.k8s.io"
+    requireDigests: false # Set to true for maximum security
+  
+  # Image scanning and vulnerability management
+  imageScanning:
+    enabled: true
+    scanner: "trivy"
+    failOnHigh: true
+    failOnCritical: true
+  
+  # Open Policy Agent
+  opa:
+    enabled: true
+    image:
+      repository: openpolicyagent/opa
+      tag: "0.58.0-envoy"
+    
+    policies:
+      autofix:
+        enabled: true
+        path: "/policies/autofix"
+      
+      infraHealing:
+        enabled: true
+        path: "/policies/infra-healing"
+  
+  # Kyverno for policy enforcement
+  kyverno:
+    enabled: true
+  
+  # RBAC configurations
+  rbac:
+    create: true
+    
+    serviceAccount:
+      create: true
+      annotations: {}
+      name: ""
+
+# Monitoring and Alerting
+monitoring:
+  # Monitoring namespace (for network policies)
+  namespace: "monitoring"
+  
+  # Grafana for visualization
+  grafana:
+    enabled: true
+    admin:
+      user: admin
+      passwordSecretName: "grafana-admin"
+      passwordSecretKey: "password"
+    
+    dashboards:
+      aiMetrics: true
+      infraHealth: true
+      codeQuality: true
+      kubernetesCluster: true
+      applicationPerformance: true
+  
+  # AlertManager
+  alertmanager:
+    enabled: true
+    
+    config:
+      global:
+        slack_api_url_file: '/etc/alertmanager/slack-webhook'
+        smtp_smarthost: 'localhost:587'
+        smtp_from: 'mlops-alerts@company.com'
+      
+      route:
+        group_by: ['alertname', 'cluster', 'service']
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 12h
+        receiver: 'default'
+        routes:
+        - match:
+            severity: critical
+          receiver: 'critical-alerts'
+          group_wait: 10s
+          repeat_interval: 1h
+        - match:
+            severity: warning
+          receiver: 'warning-alerts'
+          repeat_interval: 6h
+      
+      receivers:
+      - name: 'default'
+        slack_configs:
+        - channel: '#mlops-alerts'
+          title: 'MLOps Alert'
+          text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+      
+      - name: 'critical-alerts'
+        slack_configs:
+        - channel: '#mlops-critical'
+          title: '🚨 CRITICAL: MLOps Alert'
+          text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+        email_configs:
+        - to: 'oncall@company.com'
+          subject: 'CRITICAL: MLOps Alert'
+          body: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+      
+      - name: 'warning-alerts'
+        slack_configs:
+        - channel: '#mlops-alerts'
+          title: '⚠️ WARNING: MLOps Alert'
+          text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+    
+    # High availability for AlertManager
+    replicaCount: 3
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+            - key: app
+              operator: In
+              values:
+              - alertmanager
+          topologyKey: kubernetes.io/hostname
+
+# Storage configuration
+storage:
+  # Persistent volume claims
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    
+    # AI models storage
+    models:
+      size: 100Gi
+    
+    # Metrics storage
+    metrics:
+      size: 200Gi
+    
+    # Logs storage
+    logs:
+      size: 500Gi
+
+# Backup and Disaster Recovery
+backup:
+  enabled: true
+  
+  # Backup image
+  image:
+    repository: alpine/git
+    tag: "2.40.1"
+    pullPolicy: IfNotPresent
+  
+  # Model backup schedule
+  models:
+    schedule: "0 2 * * *"  # Daily at 2 AM
+  
+  # Metrics backup schedule  
+  metrics:
+    schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+  
+  # Job history limits
+  historyLimit:
+    successful: 3
+    failed: 1
+  
+  # Storage configuration
+  storage:
+    size: 50Gi
+    storageClass: ""
+    
+    # Cloud storage options
+    s3:
+      enabled: false
+      bucket: "mlops-backups"
+      region: "us-west-2"
+      secretName: "s3-backup-credentials"
+    
+    gcs:
+      enabled: false
+      bucket: "mlops-backups"
+      secretName: "gcs-backup-credentials"
+  
+  # Retention policies (in days)
+  retention:
+    local: 7     # Local backup retention
+    remote: 30   # Remote backup retention
+  
+  # Backup resources
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+# Disaster Recovery
+disasterRecovery:
+  enabled: true
+  
+  # Multi-region replication
+  multiRegion:
+    enabled: false
+    regions:
+      - "us-west-2"
+      - "us-east-1"
+  
+  # Recovery Time Objective (RTO) and Recovery Point Objective (RPO)
+  sla:
+    rto: "4h"    # Recovery Time Objective
+    rpo: "1h"    # Recovery Point Objective
+  
+  # Automated failover
+  automaticFailover:
+    enabled: false
+    healthCheckInterval: "5m"
+    failureThreshold: 3
+
+# Networking
+networking:
+  # Service mesh (optional)
+  istio:
+    enabled: false
+  
+  # Load balancer configuration
+  loadBalancer:
+    enabled: true
+    type: "NodePort" # ClusterIP, NodePort, LoadBalancer
+    
+    annotations: {}
+    
+  # Ingress configuration
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+    
+    hosts:
+    - host: mlops-agent.local
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: mlops-agent-api
+            port:
+              number: 80
+
+# Node affinity and tolerations
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Auto-scaling
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Testing and Quality Assurance
+testing:
+  enabled: true
+  
+  # Test image
+  image:
+    repository: curlimages/curl
+    tag: "8.4.0"
+    pullPolicy: IfNotPresent
+  
+  # Performance testing
+  performance:
+    enabled: true
+    requests: 100
+    concurrency: 10
+    duration: "5m"
+  
+  # Security testing
+  security:
+    enabled: true
+    scanImage: true
+    checkPolicies: true
+  
+  # Chaos engineering
+  chaos:
+    enabled: false
+    podKillRate: "10%"
+    networkLatency: "100ms"
+  
+  # Test resources
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# Service Level Objectives (SLOs)
+slo:
+  # AI Engine SLOs
+  aiEngine:
+    availability: 99.5      # 99.5% uptime
+    latencyP95: 2.0        # 95th percentile < 2 seconds
+    errorRate: 0.1         # < 0.1% error rate
+  
+  # Infrastructure Healer SLOs
+  infrastructureHealer:
+    availability: 99.9      # 99.9% uptime
+    healingTime: 300       # < 5 minutes to heal
+    falsePositiveRate: 1.0 # < 1% false positive rate
+  
+  # Code Autofix SLOs
+  codeAutofix:
+    availability: 99.0      # 99.0% uptime
+    fixSuccessRate: 70.0   # > 70% fix success rate
+    prCreationTime: 600    # < 10 minutes to create PR

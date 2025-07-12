@@ -1,0 +1,13 @@
+{{- if and .Values.global.namespace.create (ne .Values.global.namespace.deployment "default") }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespace.deployment }}
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    name: {{ .Values.global.namespace.deployment }}
+  annotations:
+    # Mark as managed by Helm
+    meta.helm.sh/release-name: {{ .Release.Name }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace }}
+{{- end }}

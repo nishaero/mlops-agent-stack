@@ -1,0 +1,23 @@
+apiVersion: v2
+name: mlops-agent-stack
+description: A production-grade, cloud-agnostic AI agent cluster for Kubernetes
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - mlops
+  - ai
+  - kubernetes
+  - monitoring
+  - automation
+  - gitops
+home: https://github.com/nishaero/mlops-agent-stack
+sources:
+  - https://github.com/nishaero/mlops-agent-stack
+maintainers:
+  - name: Nishant Ravi
+    email: nishant@example.com
+dependencies: []
+annotations:
+  category: MLOps
+  licenses: MIT

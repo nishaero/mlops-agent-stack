@@ -1,0 +1,152 @@
+{{- if .Values.security.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "mlops-agent-stack.serviceAccountName" . }}-ai-engine
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: ai-engine
+  {{- with .Values.security.rbac.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: ai-engine
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "nodes", "namespaces"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+- apiGroups: ["mlops.ai"]
+  resources: ["autofixpolicies", "infrahealingrules", "cloudconfigs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: ["events.k8s.io"]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: ai-engine
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine
+subjects:
+- kind: ServiceAccount
+  name: {{ include "mlops-agent-stack.serviceAccountName" . }}-ai-engine
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "mlops-agent-stack.serviceAccountName" . }}-infra-healer
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: infrastructure-healer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-infra-healer
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: infrastructure-healer
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "nodes", "persistentvolumes", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers", "verticalpodautoscalers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["mlops.ai"]
+  resources: ["infrahealingrules", "cloudconfigs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: ["cluster.x-k8s.io"]
+  resources: ["machines", "machinesets", "machinepools"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["argoproj.io"]
+  resources: ["rollouts"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-infra-healer
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: infrastructure-healer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "mlops-agent-stack.fullname" . }}-infra-healer
+subjects:
+- kind: ServiceAccount
+  name: {{ include "mlops-agent-stack.serviceAccountName" . }}-infra-healer
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "mlops-agent-stack.serviceAccountName" . }}-code-autofix
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: code-autofix
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-code-autofix
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: code-autofix
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["mlops.ai"]
+  resources: ["autofixpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: ["argoproj.io"]
+  resources: ["workflows"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: ["events.k8s.io"]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-code-autofix
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: code-autofix
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "mlops-agent-stack.fullname" . }}-code-autofix
+subjects:
+- kind: ServiceAccount
+  name: {{ include "mlops-agent-stack.serviceAccountName" . }}-code-autofix
+  namespace: {{ .Release.Namespace }}
+{{- end }}

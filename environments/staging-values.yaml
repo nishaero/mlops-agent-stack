@@ -1,0 +1,110 @@
+# Staging Environment Values
+# Override default values for staging deployment
+
+global:
+  environment: "staging"
+  clusterName: "mlops-staging"
+  region: "us-west-2"
+
+# Production-like security for staging
+security:
+  podSecurityStandards:
+    enabled: true
+    enforce: "restricted"
+  gatekeeper:
+    enabled: true
+    requireDigests: false
+  networkPolicies:
+    enabled: true
+  imageScanning:
+    enabled: true
+    failOnHigh: true
+    failOnCritical: true
+
+# AI Engine - Staging settings
+aiEngine:
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  
+  verticalPodAutoscaler:
+    enabled: true
+    updateMode: "Auto"
+
+# Infrastructure Healer - Staging settings
+infrastructureHealer:
+  replicaCount: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+  
+  config:
+    dryRun: false
+    maxActionsPerHour: 10
+
+# Code Autofix - Staging settings
+codeAutofix:
+  replicaCount: 1
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+  
+  config:
+    autoMerge:
+      enabled: false
+
+# Monitoring - Staging settings
+monitoring:
+  grafana:
+    enabled: true
+    admin:
+      passwordSecretName: "grafana-admin-staging"
+  
+  alertmanager:
+    enabled: true
+    replicaCount: 2
+
+# Backup - Staging settings
+backup:
+  enabled: true
+  models:
+    schedule: "0 3 * * *"  # Daily at 3 AM
+  storage:
+    size: 50Gi
+    s3:
+      enabled: false
+  retention:
+    local: 2
+    remote: 14
+
+# Testing enabled in staging for validation
+testing:
+  enabled: true
+  performance:
+    enabled: true
+    requests: 100
+  security:
+    enabled: true
+  chaos:
+    enabled: true
+
+# Medium resource quotas for staging
+global:
+  resourceQuota:
+    enabled: true
+    hard:
+      requests.cpu: "25"
+      requests.memory: 50Gi
+      requests.nvidia.com/gpu: "10"
+      limits.cpu: "50"
+      limits.memory: 100Gi
+      limits.nvidia.com/gpu: "10"

@@ -1,0 +1,159 @@
+# Example InfraHealingRule with namespace and exclusion configuration
+
+apiVersion: mlops.ai/v1
+kind: InfraHealingRule
+metadata:
+  name: production-healing
+  namespace: mlops-system
+spec:
+  enabled: true
+  
+  # Scope configuration with exclusions
+  scope:
+    # Monitor specific namespaces
+    namespaces:
+      - "production"
+      - "staging"
+    
+    # Target resources with specific labels
+    labels:
+      app.kubernetes.io/managed-by: "helm"
+    
+    # Exclusion rules for this healing rule
+    exclusions:
+      # Exclude deployments with these labels
+      labels:
+        mlops.ai/exclude: "true"
+        backup.kubernetes.io/exclude: "true"
+      
+      # Exclude deployments with these annotations
+      annotations:
+        deployment.kubernetes.io/exclude-healing: "true"
+        helm.sh/hook: "test"
+      
+      # Exclude deployments by name patterns (regex supported)
+      deploymentNames:
+        - "^system-.*"
+        - ".*-backup$"
+        - ".*-migration-.*"
+        - "^external-.*"
+      
+      # Exclude entire namespaces from this rule
+      namespaces:
+        - "kube-system"
+        - "cert-manager"
+  
+  # Scaling configuration
+  scaling:
+    pods:
+      enabled: true
+      maxReplicas: 20
+      minReplicas: 2
+      scaleUpThreshold: "75%"
+      scaleDownThreshold: "25%"
+      cooldownPeriod: "5m"
+    
+    nodes:
+      enabled: false
+      maxNodes: 10
+      minNodes: 3
+  
+  # Health checks configuration
+  healthChecks:
+    pods:
+      restartThreshold: 3
+      crashLoopBackoffAction: "restart"
+      oomKilledAction: "increase-memory"
+    
+    nodes:
+      notReadyTimeout: "10m"
+      diskPressureThreshold: "85%"
+      memoryPressureThreshold: "90%"
+  
+  # Rollback configuration
+  rollback:
+    enabled: true
+    conditions:
+      - "deployment-failed"
+      - "pod-crash-loop"
+    maxRollbackAttempts: 3
+    rollbackTimeout: "5m"
+  
+  # Safeguards
+  safeguards:
+    dryRun: false
+    requireApproval:
+      - "rollback"
+      - "scale_down"
+    maxActionsPerHour: 10
+  
+  # Notifications
+  notifications:
+    alertmanager:
+      enabled: true
+      severity: "warning"
+    webhook:
+      enabled: false
+      url: "https://hooks.slack.com/your/webhook/url"
+
+---
+# Global namespace exclusions for critical systems
+apiVersion: mlops.ai/v1
+kind: InfraHealingRule
+metadata:
+  name: global-exclusions
+  namespace: mlops-system
+spec:
+  enabled: true
+  
+  scope:
+    # Apply to all namespaces
+    namespaces: []
+    
+    # Global exclusions
+    exclusions:
+      labels:
+        # Never heal critical infrastructure
+        app.kubernetes.io/component: "controller"
+        app.kubernetes.io/name: "kube-dns"
+        k8s-app: "kube-proxy"
+      
+      annotations:
+        # Respect deployment annotations
+        deployment.kubernetes.io/exclude-healing: "true"
+        mlops.ai/critical-service: "true"
+      
+      deploymentNames:
+        # System deployments
+        - "^kube-.*"
+        - "^coredns.*"
+        - "^calico-.*"
+        - "^cilium-.*"
+        # Monitoring and logging
+        - "^prometheus-.*"
+        - "^grafana.*"
+        - "^jaeger-.*"
+        - "^elasticsearch-.*"
+        # Backup and migration jobs
+        - ".*-backup$"
+        - ".*-migration.*"
+        - ".*-restore$"
+      
+      namespaces:
+        # Never heal these namespaces
+        - "kube-system"
+        - "kube-public" 
+        - "kube-node-lease"
+        - "cert-manager"
+        - "ingress-nginx"
+        - "metallb-system"
+  
+  # Very conservative settings for global rule
+  safeguards:
+    dryRun: true  # Start in dry-run mode
+    maxActionsPerHour: 5
+  
+  notifications:
+    alertmanager:
+      enabled: true
+      severity: "critical"

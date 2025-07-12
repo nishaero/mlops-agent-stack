@@ -1,0 +1,74 @@
+apiVersion: mlops.ai/v1
+kind: CloudConfig
+metadata:
+  name: production-cluster
+  namespace: default
+  labels:
+    env: production
+    cloud: azure
+spec:
+  provider: "azure"
+  region: "eastus"
+  credentials:
+    secretRef:
+      name: "azure-credentials"
+      namespace: "default"
+  nodeGroups:
+  - name: "system-nodes"
+    instanceType: "Standard_DS2_v2"
+    minSize: 3
+    maxSize: 5
+    desiredSize: 3
+    diskSize: 100
+    labels:
+      node-type: "system"
+      workload: "infrastructure"
+    taints:
+    - key: "node-type"
+      value: "system"
+      effect: "NoSchedule"
+  - name: "application-nodes"
+    instanceType: "Standard_DS3_v2"
+    minSize: 2
+    maxSize: 20
+    desiredSize: 5
+    diskSize: 200
+    labels:
+      node-type: "application"
+      workload: "general"
+    spotInstances: true
+  - name: "gpu-nodes"
+    instanceType: "Standard_NC6s_v3"
+    minSize: 0
+    maxSize: 3
+    desiredSize: 1
+    diskSize: 500
+    labels:
+      node-type: "gpu"
+      workload: "ml-training"
+    taints:
+    - key: "nvidia.com/gpu"
+      value: "true"
+      effect: "NoSchedule"
+  networking:
+    vpcId: "vnet-production-eastus"
+    subnetIds:
+    - "subnet-nodes-eastus-1"
+    - "subnet-nodes-eastus-2"
+    - "subnet-nodes-eastus-3"
+    securityGroupIds:
+    - "nsg-kubernetes-nodes"
+    loadBalancer:
+      enabled: true
+      type: "application"
+      annotations:
+        service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: "/healthz"
+  monitoring:
+    azureMonitor:
+      enabled: true
+      workspaceId: "log-analytics-workspace-id"
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    retention: "30d"
+    crossRegion: true

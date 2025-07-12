@@ -1,0 +1,21 @@
+[flake8]
+max-line-length = 127
+max-complexity = 10
+exclude = 
+    .git,
+    __pycache__,
+    .pytest_cache,
+    .mypy_cache,
+    build,
+    dist
+
+# Ignore W503 (line break before binary operator) and E203 (whitespace before ':') as they conflict with black's formatting
+ignore = W503,E203
+
+# Temporarily allow higher complexity for critical healing functions
+per-file-ignores =
+    operators/infrastructure-healer/main.py:C901
+    operators/infrastructure-healer/test_infrastructure_healer.py:E402
+
+# Standard error codes we want to catch
+select = E,W,F,C

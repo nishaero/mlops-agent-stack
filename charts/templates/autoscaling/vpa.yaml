@@ -1,0 +1,30 @@
+{{- if and .Values.aiEngine.enabled .Values.aiEngine.verticalPodAutoscaler.enabled }}
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: ai-engine
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine
+  updatePolicy:
+    updateMode: {{ .Values.aiEngine.verticalPodAutoscaler.updateMode }}
+  resourcePolicy:
+    containerPolicies:
+    - containerName: ai-engine
+      minAllowed:
+        cpu: {{ .Values.aiEngine.verticalPodAutoscaler.minAllowed.cpu }}
+        memory: {{ .Values.aiEngine.verticalPodAutoscaler.minAllowed.memory }}
+      maxAllowed:
+        cpu: {{ .Values.aiEngine.verticalPodAutoscaler.maxAllowed.cpu }}
+        memory: {{ .Values.aiEngine.verticalPodAutoscaler.maxAllowed.memory }}
+      controlledResources:
+        - cpu
+        - memory
+      controlledValues: RequestsAndLimits
+{{- end }}

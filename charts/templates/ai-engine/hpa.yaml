@@ -1,0 +1,81 @@
+{{- if and .Values.aiEngine.enabled .Values.aiEngine.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: ai-engine
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine
+  minReplicas: {{ .Values.aiEngine.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.aiEngine.autoscaling.maxReplicas }}
+  metrics:
+  {{- if .Values.aiEngine.autoscaling.targetCPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.aiEngine.autoscaling.targetCPUUtilizationPercentage }}
+  {{- end }}
+  {{- if .Values.aiEngine.autoscaling.targetMemoryUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.aiEngine.autoscaling.targetMemoryUtilizationPercentage }}
+  {{- end }}
+  {{- if .Values.aiEngine.autoscaling.targetGPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: nvidia.com/gpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.aiEngine.autoscaling.targetGPUUtilizationPercentage }}
+  {{- end }}
+  {{- if .Values.aiEngine.autoscaling.customMetrics }}
+  {{- range .Values.aiEngine.autoscaling.customMetrics }}
+  - type: External
+    external:
+      metric:
+        name: {{ .name }}
+        selector:
+          matchLabels:
+            {{- toYaml .labels | nindent 12 }}
+      target:
+        type: {{ .target.type }}
+        {{- if eq .target.type "Value" }}
+        value: {{ .target.value }}
+        {{- else if eq .target.type "AverageValue" }}
+        averageValue: {{ .target.averageValue }}
+        {{- end }}
+  {{- end }}
+  {{- end }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: {{ .Values.aiEngine.autoscaling.behavior.scaleDown.stabilizationWindowSeconds }}
+      policies:
+      - type: Percent
+        value: {{ .Values.aiEngine.autoscaling.behavior.scaleDown.percentPolicy.value }}
+        periodSeconds: {{ .Values.aiEngine.autoscaling.behavior.scaleDown.percentPolicy.periodSeconds }}
+      - type: Pods
+        value: {{ .Values.aiEngine.autoscaling.behavior.scaleDown.podsPolicy.value }}
+        periodSeconds: {{ .Values.aiEngine.autoscaling.behavior.scaleDown.podsPolicy.periodSeconds }}
+      selectPolicy: {{ .Values.aiEngine.autoscaling.behavior.scaleDown.selectPolicy }}
+    scaleUp:
+      stabilizationWindowSeconds: {{ .Values.aiEngine.autoscaling.behavior.scaleUp.stabilizationWindowSeconds }}
+      policies:
+      - type: Percent
+        value: {{ .Values.aiEngine.autoscaling.behavior.scaleUp.percentPolicy.value }}
+        periodSeconds: {{ .Values.aiEngine.autoscaling.behavior.scaleUp.percentPolicy.periodSeconds }}
+      - type: Pods
+        value: {{ .Values.aiEngine.autoscaling.behavior.scaleUp.podsPolicy.value }}
+        periodSeconds: {{ .Values.aiEngine.autoscaling.behavior.scaleUp.podsPolicy.periodSeconds }}
+      selectPolicy: {{ .Values.aiEngine.autoscaling.behavior.scaleUp.selectPolicy }}
+{{- end }}

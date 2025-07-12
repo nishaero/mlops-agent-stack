@@ -1,0 +1,256 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: infrahealingrules.mlops.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.13.0
+spec:
+  group: mlops.ai
+  names:
+    kind: InfraHealingRule
+    listKind: InfraHealingRuleList
+    plural: infrahealingrules
+    singular: infrahealingrule
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+                default: true
+                description: "Enable or disable infrastructure healing"
+              scope:
+                type: object
+                properties:
+                  namespaces:
+                    type: array
+                    items:
+                      type: string
+                    description: "Target namespaces for healing"
+                  labels:
+                    type: object
+                    additionalProperties:
+                      type: string
+                    description: "Label selectors for target resources"
+                  exclusions:
+                    type: object
+                    description: "Rules for excluding resources from healing"
+                    properties:
+                      labels:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: "Exclude resources with these labels"
+                      annotations:
+                        type: object
+                        additionalProperties:
+                          type: string  
+                        description: "Exclude resources with these annotations"
+                      deploymentNames:
+                        type: array
+                        items:
+                          type: string
+                        description: "Exclude deployments matching these name patterns (regex supported)"
+                      namespaces:
+                        type: array
+                        items:
+                          type: string
+                        description: "Exclude these entire namespaces from healing"
+              scaling:
+                type: object
+                properties:
+                  pods:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      maxReplicas:
+                        type: integer
+                        default: 100
+                        description: "Maximum pod replicas for scaling"
+                      minReplicas:
+                        type: integer
+                        default: 1
+                        description: "Minimum pod replicas for scaling"
+                      scaleUpThreshold:
+                        type: string
+                        default: "80%"
+                        description: "CPU/Memory threshold for scaling up"
+                      scaleDownThreshold:
+                        type: string
+                        default: "20%"
+                        description: "CPU/Memory threshold for scaling down"
+                      cooldownPeriod:
+                        type: string
+                        default: "5m"
+                        description: "Cooldown period between scaling actions"
+                  nodes:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: false
+                        description: "Enable automatic node scaling"
+                      maxNodes:
+                        type: integer
+                        default: 10
+                      minNodes:
+                        type: integer
+                        default: 3
+                      scaleUpCPUThreshold:
+                        type: string
+                        default: "70%"
+                      scaleUpMemoryThreshold:
+                        type: string
+                        default: "80%"
+              healthChecks:
+                type: object
+                properties:
+                  pods:
+                    type: object
+                    properties:
+                      restartThreshold:
+                        type: integer
+                        default: 5
+                        description: "Restart count threshold for pod replacement"
+                      crashLoopBackoffAction:
+                        type: string
+                        enum: ["restart", "scale-down", "rollback"]
+                        default: "restart"
+                      oomKilledAction:
+                        type: string
+                        enum: ["increase-memory", "scale-out", "alert"]
+                        default: "increase-memory"
+                  nodes:
+                    type: object
+                    properties:
+                      notReadyTimeout:
+                        type: string
+                        default: "10m"
+                        description: "Timeout before replacing not-ready nodes"
+                      diskPressureThreshold:
+                        type: string
+                        default: "85%"
+                      memoryPressureThreshold:
+                        type: string
+                        default: "90%"
+              rollback:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: true
+                  conditions:
+                    type: array
+                    items:
+                      type: string
+                    description: "Conditions triggering rollback"
+                  maxRollbackAttempts:
+                    type: integer
+                    default: 3
+                  rollbackTimeout:
+                    type: string
+                    default: "5m"
+              notifications:
+                type: object
+                properties:
+                  alertmanager:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      severity:
+                        type: string
+                        enum: ["info", "warning", "critical"]
+                        default: "warning"
+                  webhook:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: false
+                      url:
+                        type: string
+              safeguards:
+                type: object
+                properties:
+                  dryRun:
+                    type: boolean
+                    default: false
+                    description: "Enable dry-run mode for testing"
+                  requireApproval:
+                    type: array
+                    items:
+                      type: string
+                    description: "Actions requiring human approval"
+                  maxActionsPerHour:
+                    type: integer
+                    default: 10
+                    description: "Maximum healing actions per hour"
+            required:
+            - scope
+          status:
+            type: object
+            properties:
+              lastHealing:
+                type: string
+                format: date-time
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+              healingStats:
+                type: object
+                properties:
+                  totalActions:
+                    type: integer
+                  successfulActions:
+                    type: integer
+                  failedActions:
+                    type: integer
+                  lastHourActions:
+                    type: integer
+    additionalPrinterColumns:
+    - name: Enabled
+      type: boolean
+      jsonPath: .spec.enabled
+    - name: Pod-Scaling
+      type: boolean
+      jsonPath: .spec.scaling.pods.enabled
+    - name: Node-Scaling
+      type: boolean
+      jsonPath: .spec.scaling.nodes.enabled
+    - name: Dry-Run
+      type: boolean
+      jsonPath: .spec.safeguards.dryRun
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp

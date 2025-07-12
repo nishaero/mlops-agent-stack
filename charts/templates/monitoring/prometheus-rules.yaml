@@ -1,0 +1,249 @@
+{{- if .Values.monitoring.alertmanager.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-prometheus-rules
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    prometheus: kube-prometheus
+    role: alert-rules
+data:
+  mlops-alerts.yml: |
+    groups:
+    - name: mlops.ai-engine
+      interval: 30s
+      rules:
+      # AI Engine Health
+      - alert: AIEngineDown
+        expr: up{job="ai-engine"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: ai-engine
+        annotations:
+          summary: "AI Engine is down"
+          description: "AI Engine has been down for more than 1 minute"
+          runbook_url: "https://docs.company.com/mlops/runbooks/ai-engine-down"
+      
+      - alert: AIEngineHighLatency
+        expr: histogram_quantile(0.95, rate(ai_model_processing_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: ai-engine
+        annotations:
+          summary: "AI Engine high latency detected"
+          description: "95th percentile latency is {{ "{{" }} $value {{ "}}" }}s"
+          runbook_url: "https://docs.company.com/mlops/runbooks/ai-engine-latency"
+      
+      - alert: AIModelAccuracyDrop
+        expr: ai_model_accuracy < 0.85
+        for: 10m
+        labels:
+          severity: warning
+          component: ai-engine
+        annotations:
+          summary: "AI Model accuracy dropped"
+          description: "Model {{ "{{" }} $labels.model_name {{ "}}" }} accuracy is {{ "{{" }} $value {{ "}}" }}"
+          runbook_url: "https://docs.company.com/mlops/runbooks/model-accuracy"
+      
+      - alert: HighAnomalyDetectionRate
+        expr: rate(ai_anomalies_detected_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: ai-engine
+        annotations:
+          summary: "High anomaly detection rate"
+          description: "Detecting {{ "{{" }} $value {{ "}}" }} anomalies per second"
+          runbook_url: "https://docs.company.com/mlops/runbooks/high-anomalies"
+      
+      - alert: GPUUtilizationHigh
+        expr: nvidia_smi_utilization_gpu_ratio > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: ai-engine
+        annotations:
+          summary: "GPU utilization high"
+          description: "GPU {{ "{{" }} $labels.gpu {{ "}}" }} utilization is {{ "{{" }} $value {{ "}}" }}%"
+          runbook_url: "https://docs.company.com/mlops/runbooks/gpu-utilization"
+      
+      - alert: GPUMemoryHigh
+        expr: nvidia_smi_memory_used_bytes / nvidia_smi_memory_total_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: ai-engine
+        annotations:
+          summary: "GPU memory usage high"
+          description: "GPU {{ "{{" }} $labels.gpu {{ "}}" }} memory usage is {{ "{{" }} $value {{ "}}" }}%"
+    
+    - name: mlops.infrastructure-healer
+      interval: 30s
+      rules:
+      # Infrastructure Healer Health
+      - alert: InfrastructureHealerDown
+        expr: up{job="infrastructure-healer"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: infrastructure-healer
+        annotations:
+          summary: "Infrastructure Healer is down"
+          description: "Infrastructure Healer has been down for more than 1 minute"
+          runbook_url: "https://docs.company.com/mlops/runbooks/infrastructure-healer-down"
+      
+      - alert: HighHealingActionRate
+        expr: rate(infrastructure_healing_actions_total[5m]) > 1
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure-healer
+        annotations:
+          summary: "High infrastructure healing action rate"
+          description: "Healing actions rate is {{ "{{" }} $value {{ "}}" }} per second"
+          runbook_url: "https://docs.company.com/mlops/runbooks/high-healing-actions"
+      
+      - alert: PodRestartLoop
+        expr: rate(kube_pod_container_status_restarts_total{namespace="{{ include "mlops-agent-stack.namespace" . }}"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure-healer
+        annotations:
+          summary: "Pod restart loop detected"
+          description: "Pod {{ "{{" }} $labels.pod {{ "}}" }} is restarting frequently"
+          runbook_url: "https://docs.company.com/mlops/runbooks/pod-restart-loop"
+      
+      - alert: NodeNotReady
+        expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure-healer
+        annotations:
+          summary: "Node not ready"
+          description: "Node {{ "{{" }} $labels.node {{ "}}" }} is not ready"
+          runbook_url: "https://docs.company.com/mlops/runbooks/node-not-ready"
+    
+    - name: mlops.code-autofix
+      interval: 30s
+      rules:
+      # Code Autofix Health
+      - alert: CodeAutofixDown
+        expr: up{job="code-autofix"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: code-autofix
+        annotations:
+          summary: "Code Autofix is down"
+          description: "Code Autofix has been down for more than 1 minute"
+          runbook_url: "https://docs.company.com/mlops/runbooks/code-autofix-down"
+      
+      - alert: LowCodeFixSuccessRate
+        expr: rate(code_autofix_success_total[1h]) / rate(code_autofix_attempts_total[1h]) < 0.7
+        for: 30m
+        labels:
+          severity: warning
+          component: code-autofix
+        annotations:
+          summary: "Low code fix success rate"
+          description: "Code fix success rate is {{ "{{" }} $value {{ "}}" }}%"
+          runbook_url: "https://docs.company.com/mlops/runbooks/low-fix-success-rate"
+      
+      - alert: HighErrorDetectionRate
+        expr: rate(code_errors_detected_total[5m]) > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: code-autofix
+        annotations:
+          summary: "High error detection rate"
+          description: "Detecting {{ "{{" }} $value {{ "}}" }} errors per second"
+          runbook_url: "https://docs.company.com/mlops/runbooks/high-error-detection"
+    
+    - name: mlops.resource-management
+      interval: 30s
+      rules:
+      # Resource Management
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{namespace="{{ include "mlops-agent-stack.namespace" . }}"}[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: resource-management
+        annotations:
+          summary: "High CPU usage"
+          description: "Container {{ "{{" }} $labels.container {{ "}}" }} CPU usage is {{ "{{" }} $value {{ "}}" }}%"
+          runbook_url: "https://docs.company.com/mlops/runbooks/high-cpu-usage"
+      
+      - alert: HighMemoryUsage
+        expr: container_memory_usage_bytes{namespace="{{ include "mlops-agent-stack.namespace" . }}"} / container_spec_memory_limit_bytes * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          component: resource-management
+        annotations:
+          summary: "High memory usage"
+          description: "Container {{ "{{" }} $labels.container {{ "}}" }} memory usage is {{ "{{" }} $value {{ "}}" }}%"
+          runbook_url: "https://docs.company.com/mlops/runbooks/high-memory-usage"
+      
+      - alert: PVCStorageFull
+        expr: kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: resource-management
+        annotations:
+          summary: "PVC storage running low"
+          description: "PVC {{ "{{" }} $labels.persistentvolumeclaim {{ "}}" }} is {{ "{{" }} $value {{ "}}" }}% full"
+          runbook_url: "https://docs.company.com/mlops/runbooks/pvc-storage-full"
+    
+    - name: mlops.sli-slo
+      interval: 60s
+      rules:
+      # Service Level Indicators (SLIs)
+      - record: mlops:ai_engine:availability
+        expr: avg_over_time(up{job="ai-engine"}[5m])
+      
+      - record: mlops:ai_engine:latency_p95
+        expr: histogram_quantile(0.95, rate(ai_model_processing_duration_seconds_bucket[5m]))
+      
+      - record: mlops:ai_engine:throughput
+        expr: rate(ai_model_inference_total[5m])
+      
+      - record: mlops:infrastructure_healer:availability
+        expr: avg_over_time(up{job="infrastructure-healer"}[5m])
+      
+      - record: mlops:code_autofix:availability
+        expr: avg_over_time(up{job="code-autofix"}[5m])
+      
+      - record: mlops:code_autofix:success_rate
+        expr: rate(code_autofix_success_total[5m]) / rate(code_autofix_attempts_total[5m])
+      
+      # Service Level Objective (SLO) Alerts
+      - alert: AIEngineAvailabilitySLOViolation
+        expr: mlops:ai_engine:availability < 0.995
+        for: 5m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "AI Engine availability SLO violation"
+          description: "AI Engine availability is {{ "{{" }} $value {{ "}}" }} (SLO: 99.5%)"
+          runbook_url: "https://docs.company.com/mlops/slo/ai-engine-availability"
+      
+      - alert: AIEngineLatencySLOViolation
+        expr: mlops:ai_engine:latency_p95 > 2
+        for: 5m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "AI Engine latency SLO violation"
+          description: "AI Engine P95 latency is {{ "{{" }} $value {{ "}}" }}s (SLO: 2s)"
+          runbook_url: "https://docs.company.com/mlops/slo/ai-engine-latency"
+{{- end }}

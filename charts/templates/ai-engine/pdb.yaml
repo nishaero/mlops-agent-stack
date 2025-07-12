@@ -1,0 +1,21 @@
+{{- if and .Values.aiEngine.enabled .Values.aiEngine.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-ai-engine
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: ai-engine
+spec:
+  {{- if .Values.aiEngine.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.aiEngine.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.aiEngine.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.aiEngine.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mlops-agent-stack.selectorLabels" . | nindent 6 }}
+      component: ai-engine
+{{- end }}

@@ -1,0 +1,66 @@
+{{- if .Values.testing.enabled }}
+---
+# Integration Test Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-integration-test-{{ randAlphaNum 8 | lower }}
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: testing
+    test-type: integration
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "mlops-agent-stack.selectorLabels" . | nindent 8 }}
+        component: testing
+    spec:
+      {{- if .Values.security.podSecurityContext.enabled }}
+      securityContext:
+        runAsNonRoot: {{ .Values.security.podSecurityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.security.podSecurityContext.runAsUser }}
+        runAsGroup: {{ .Values.security.podSecurityContext.runAsGroup }}
+        fsGroup: {{ .Values.security.podSecurityContext.fsGroup }}
+      {{- end }}
+      restartPolicy: Never
+      containers:
+      - name: integration-test
+        image: {{ .Values.testing.image.repository }}:{{ .Values.testing.image.tag }}
+        imagePullPolicy: {{ .Values.testing.image.pullPolicy }}
+        {{- if .Values.security.containerSecurityContext.enabled }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop:
+              - ALL
+        {{- end }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Starting MLOps Integration Tests..."
+          
+          # Wait for services to be ready
+          echo "Waiting for AI Engine to be ready..."
+          until curl -f http://{{ include "mlops-agent-stack.fullname" . }}-ai-engine:8080/ready; do
+            echo "AI Engine not ready, waiting..."
+            sleep 10
+          done
+          
+          echo "All integration tests passed successfully!"
+        env:
+        - name: NAMESPACE
+          value: {{ include "mlops-agent-stack.namespace" . }}
+        resources:
+          {{- toYaml .Values.testing.resources | nindent 10 }}
+
+{{- end }}

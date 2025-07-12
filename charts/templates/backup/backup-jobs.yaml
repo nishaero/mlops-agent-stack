@@ -1,0 +1,116 @@
+{{- if .Values.backup.enabled }}
+---
+# Backup CronJob for AI Models
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-model-backup
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: backup
+spec:
+  schedule: {{ .Values.backup.models.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.backup.historyLimit.successful }}
+  failedJobsHistoryLimit: {{ .Values.backup.historyLimit.failed }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "mlops-agent-stack.selectorLabels" . | nindent 12 }}
+            component: backup
+        spec:
+          {{- if .Values.security.podSecurityContext.enabled }}
+          securityContext:
+            runAsNonRoot: {{ .Values.security.podSecurityContext.runAsNonRoot }}
+            runAsUser: {{ .Values.security.podSecurityContext.runAsUser }}
+            runAsGroup: {{ .Values.security.podSecurityContext.runAsGroup }}
+            fsGroup: {{ .Values.security.podSecurityContext.fsGroup }}
+          {{- end }}
+          restartPolicy: OnFailure
+          containers:
+          - name: model-backup
+            image: {{ .Values.backup.image.repository }}:{{ .Values.backup.image.tag }}
+            imagePullPolicy: {{ .Values.backup.image.pullPolicy }}
+            {{- if .Values.security.containerSecurityContext.enabled }}
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              runAsNonRoot: true
+              runAsUser: 65534
+              capabilities:
+                drop:
+                  - ALL
+            {{- end }}
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              BACKUP_DATE=$(date +%Y%m%d_%H%M%S)
+              BACKUP_PATH="/backup/models_${BACKUP_DATE}"
+              
+              echo "Starting model backup at $(date)"
+              echo "Backup path: ${BACKUP_PATH}"
+              
+              # Create backup directory
+              mkdir -p "${BACKUP_PATH}"
+              
+              # Backup AI models
+              if [ -d "/models" ]; then
+                echo "Backing up AI models..."
+                tar -czf "${BACKUP_PATH}/ai_models.tar.gz" -C /models .
+                echo "AI models backup completed"
+              fi
+              
+              # Create backup metadata
+              cat > "${BACKUP_PATH}/metadata.json" << EOF
+              {
+                "backup_date": "$(date -Iseconds)",
+                "backup_type": "ai_models",
+                "backup_version": "{{ .Chart.AppVersion }}",
+                "namespace": "{{ include "mlops-agent-stack.namespace" . }}",
+                "cluster": "${CLUSTER_NAME:-unknown}",
+                "components": ["ai-models", "configuration"]
+              }
+              EOF
+              
+              echo "Model backup completed at $(date)"
+            env:
+            - name: CLUSTER_NAME
+              value: {{ .Values.global.clusterName | quote }}
+            volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: backup-storage
+              mountPath: /backup
+            resources:
+              {{- toYaml .Values.backup.resources | nindent 14 }}
+          volumes:
+          - name: models
+            persistentVolumeClaim:
+              claimName: {{ include "mlops-agent-stack.fullname" . }}-ai-models
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: {{ include "mlops-agent-stack.fullname" . }}-backup
+
+---
+# Backup Storage PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-backup
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.backup.storage.storageClass | default .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.storage.size }}
+
+{{- end }}

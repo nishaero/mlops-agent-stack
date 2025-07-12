@@ -1,0 +1,153 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: autofixpolicies.mlops.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.13.0
+spec:
+  group: mlops.ai
+  names:
+    kind: AutoFixPolicy
+    listKind: AutoFixPolicyList
+    plural: autofixpolicies
+    singular: autofixpolicy
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+                default: true
+                description: "Enable or disable automatic code fixing"
+              repositories:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    url:
+                      type: string
+                      description: "Repository URL (GitHub/GitLab)"
+                    branch:
+                      type: string
+                      default: "main"
+                      description: "Target branch for fixes"
+                    allowedPaths:
+                      type: array
+                      items:
+                        type: string
+                      description: "Allowed file paths for modifications"
+                    excludedPaths:
+                      type: array
+                      items:
+                        type: string
+                      description: "Excluded file paths from modifications"
+                  required:
+                  - url
+              autoMerge:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: false
+                    description: "Enable automatic merging of PRs"
+                  conditions:
+                    type: array
+                    items:
+                      type: string
+                    description: "Conditions for auto-merge (e.g., 'tests-pass', 'security-scan-clean')"
+                  maxRiskLevel:
+                    type: string
+                    enum: ["low", "medium", "high"]
+                    default: "low"
+                    description: "Maximum risk level for auto-merge"
+              notifications:
+                type: object
+                properties:
+                  slack:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: false
+                      webhook:
+                        type: string
+                      channel:
+                        type: string
+                  teams:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: false
+                      webhook:
+                        type: string
+              riskAssessment:
+                type: object
+                properties:
+                  maxChangesPerPR:
+                    type: integer
+                    default: 10
+                    description: "Maximum number of files changed per PR"
+                  requireApproval:
+                    type: array
+                    items:
+                      type: string
+                    description: "File patterns requiring human approval"
+                  dryRunFirst:
+                    type: boolean
+                    default: true
+                    description: "Require dry-run validation before applying fixes"
+            required:
+            - repositories
+          status:
+            type: object
+            properties:
+              lastSync:
+                type: string
+                format: date-time
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+              activeFixes:
+                type: integer
+                description: "Number of active fix processes"
+    additionalPrinterColumns:
+    - name: Enabled
+      type: boolean
+      jsonPath: .spec.enabled
+    - name: Repositories
+      type: integer
+      jsonPath: .spec.repositories[*]
+    - name: Auto-Merge
+      type: boolean
+      jsonPath: .spec.autoMerge.enabled
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
