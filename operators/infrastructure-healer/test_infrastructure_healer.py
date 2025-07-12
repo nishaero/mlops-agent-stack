@@ -19,7 +19,9 @@ sys.modules["prometheus_client"] = MagicMock()
 
 from main import (
     ActionPlanner,
+    ExclusionRules,
     HealingAction,
+    MonitoringConfig,
     ObservationWindow,
     PodMetrics,
     PodObserver,
@@ -205,6 +207,146 @@ class TestHealingAction(unittest.TestCase):
 
         # Should not be ready immediately after creation
         self.assertFalse(action.is_ready_to_execute())
+
+
+class TestExclusionRules(unittest.TestCase):
+    """Test ExclusionRules functionality"""
+
+    def setUp(self):
+        self.exclusions = ExclusionRules(
+            labels={"mlops.ai/exclude": "true", "env": "test"},
+            annotations={"deployment.kubernetes.io/exclude-healing": "true"},
+            deployment_names=["^system-.*", ".*-backup$"],
+            namespaces={"kube-system", "monitoring"},
+        )
+
+    def test_matches_labels(self):
+        """Test label-based exclusion matching"""
+        # Should match
+        self.assertTrue(self.exclusions.matches_labels({"mlops.ai/exclude": "true", "app": "web"}))
+        self.assertTrue(self.exclusions.matches_labels({"env": "test"}))
+
+        # Should not match
+        self.assertFalse(self.exclusions.matches_labels({"mlops.ai/exclude": "false"}))
+        self.assertFalse(self.exclusions.matches_labels({"app": "web"}))
+        self.assertFalse(self.exclusions.matches_labels({}))
+
+    def test_matches_annotations(self):
+        """Test annotation-based exclusion matching"""
+        # Should match
+        self.assertTrue(self.exclusions.matches_annotations({"deployment.kubernetes.io/exclude-healing": "true"}))
+
+        # Should not match
+        self.assertFalse(self.exclusions.matches_annotations({"deployment.kubernetes.io/exclude-healing": "false"}))
+        self.assertFalse(self.exclusions.matches_annotations({"other": "annotation"}))
+        self.assertFalse(self.exclusions.matches_annotations({}))
+
+    def test_matches_deployment_name(self):
+        """Test deployment name pattern matching"""
+        # Should match regex patterns
+        self.assertTrue(self.exclusions.matches_deployment_name("system-controller"))
+        self.assertTrue(self.exclusions.matches_deployment_name("database-backup"))
+
+        # Should not match
+        self.assertFalse(self.exclusions.matches_deployment_name("web-app"))
+        self.assertFalse(self.exclusions.matches_deployment_name("api-server"))
+
+    def test_matches_namespace(self):
+        """Test namespace exclusion matching"""
+        # Should match
+        self.assertTrue(self.exclusions.matches_namespace("kube-system"))
+        self.assertTrue(self.exclusions.matches_namespace("monitoring"))
+
+        # Should not match
+        self.assertFalse(self.exclusions.matches_namespace("default"))
+        self.assertFalse(self.exclusions.matches_namespace("production"))
+
+    def test_empty_exclusions(self):
+        """Test behavior with empty exclusion rules"""
+        empty_exclusions = ExclusionRules()
+
+        # Should not match anything
+        self.assertFalse(empty_exclusions.matches_labels({"any": "label"}))
+        self.assertFalse(empty_exclusions.matches_annotations({"any": "annotation"}))
+        self.assertFalse(empty_exclusions.matches_deployment_name("any-name"))
+        self.assertFalse(empty_exclusions.matches_namespace("any-namespace"))
+
+
+class TestMonitoringConfig(unittest.TestCase):
+    """Test MonitoringConfig functionality"""
+
+    def setUp(self):
+        self.exclusions = ExclusionRules(namespaces={"kube-system", "monitoring"})
+        self.config = MonitoringConfig(namespaces=["default", "production"], exclusions=self.exclusions)
+
+    def test_should_monitor_namespace_with_whitelist(self):
+        """Test namespace monitoring with specific namespace list"""
+        # Should monitor specified namespaces (if not excluded)
+        self.assertTrue(self.config.should_monitor_namespace("default"))
+        self.assertTrue(self.config.should_monitor_namespace("production"))
+
+        # Should not monitor excluded namespaces
+        self.assertFalse(self.config.should_monitor_namespace("kube-system"))
+        self.assertFalse(self.config.should_monitor_namespace("monitoring"))
+
+        # Should not monitor unspecified namespaces
+        self.assertFalse(self.config.should_monitor_namespace("staging"))
+
+    def test_should_monitor_namespace_all_namespaces(self):
+        """Test namespace monitoring when no specific namespaces configured"""
+        config = MonitoringConfig(namespaces=[], exclusions=self.exclusions)  # Empty means all namespaces
+
+        # Should monitor all namespaces except excluded
+        self.assertTrue(config.should_monitor_namespace("default"))
+        self.assertTrue(config.should_monitor_namespace("production"))
+        self.assertTrue(config.should_monitor_namespace("staging"))
+
+        # Should not monitor excluded namespaces
+        self.assertFalse(config.should_monitor_namespace("kube-system"))
+        self.assertFalse(config.should_monitor_namespace("monitoring"))
+
+    def test_should_heal_deployment(self):
+        """Test deployment healing decision"""
+
+        # Mock deployment object
+        class MockDeployment:
+            def __init__(self, name, namespace, labels=None, annotations=None):
+                self.metadata = type(
+                    "obj",
+                    (object,),
+                    {"name": name, "namespace": namespace, "labels": labels or {}, "annotations": annotations or {}},
+                )()
+
+        # Test deployment in monitored namespace
+        deployment = MockDeployment("web-app", "production")
+        self.assertTrue(self.config.should_heal_deployment(deployment))
+
+        # Test deployment in excluded namespace
+        deployment = MockDeployment("system-app", "kube-system")
+        self.assertFalse(self.config.should_heal_deployment(deployment))
+
+        # Test deployment in unmonitored namespace
+        deployment = MockDeployment("test-app", "staging")
+        self.assertFalse(self.config.should_heal_deployment(deployment))
+
+    def test_should_heal_deployment_with_exclusion_labels(self):
+        """Test deployment healing with label-based exclusions"""
+        config = MonitoringConfig(namespaces=["default"], exclusions=ExclusionRules(labels={"mlops.ai/exclude": "true"}))
+
+        # Mock deployment object
+        class MockDeployment:
+            def __init__(self, name, namespace, labels=None):
+                self.metadata = type(
+                    "obj", (object,), {"name": name, "namespace": namespace, "labels": labels or {}, "annotations": {}}
+                )()
+
+        # Should heal deployment without exclusion label
+        deployment = MockDeployment("web-app", "default")
+        self.assertTrue(config.should_heal_deployment(deployment))
+
+        # Should not heal deployment with exclusion label
+        deployment = MockDeployment("excluded-app", "default", {"mlops.ai/exclude": "true"})
+        self.assertFalse(config.should_heal_deployment(deployment))
 
 
 if __name__ == "__main__":

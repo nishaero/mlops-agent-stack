@@ -1,0 +1,50 @@
+{{- if .Values.infrastructureHealer.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mlops-agent-stack.fullname" . }}-infrastructure-healer-config
+  labels:
+    {{- include "mlops-agent-stack.labels" . | nindent 4 }}
+    component: infrastructure-healer
+data:
+  config.yaml: |
+    monitoring:
+      # Namespaces to monitor for infrastructure healing
+      {{- if .Values.infrastructureHealer.config.monitoring.namespaces }}
+      namespaces:
+        {{- toYaml .Values.infrastructureHealer.config.monitoring.namespaces | nindent 8 }}
+      {{- else if .Values.global.monitoring.namespaces }}
+      namespaces:
+        {{- toYaml .Values.global.monitoring.namespaces | nindent 8 }}
+      {{- else }}
+      namespaces: []  # Empty means monitor all namespaces
+      {{- end }}
+      
+      # Global exclusion rules
+      exclusions:
+        labels:
+          {{- $globalLabels := .Values.global.monitoring.exclusions.labels | default dict }}
+          {{- $localLabels := .Values.infrastructureHealer.config.monitoring.exclusions.labels | default dict }}
+          {{- $mergedLabels := mergeOverwrite $globalLabels $localLabels }}
+          {{- toYaml $mergedLabels | nindent 10 }}
+        annotations:
+          {{- $globalAnnotations := .Values.global.monitoring.exclusions.annotations | default dict }}
+          {{- $localAnnotations := .Values.infrastructureHealer.config.monitoring.exclusions.annotations | default dict }}
+          {{- $mergedAnnotations := mergeOverwrite $globalAnnotations $localAnnotations }}
+          {{- toYaml $mergedAnnotations | nindent 10 }}
+        deploymentNames:
+          {{- $globalNames := .Values.global.monitoring.exclusions.deploymentNames | default list }}
+          {{- $localNames := .Values.infrastructureHealer.config.monitoring.exclusions.deploymentNames | default list }}
+          {{- $mergedNames := concat $globalNames $localNames | uniq }}
+          {{- toYaml $mergedNames | nindent 10 }}
+        namespaces:
+          {{- $globalNS := .Values.global.monitoring.exclusions.namespaces | default list }}
+          {{- $localNS := .Values.infrastructureHealer.config.monitoring.exclusions.namespaces | default list }}
+          {{- $mergedNS := concat $globalNS $localNS | uniq }}
+          {{- toYaml $mergedNS | nindent 10 }}
+    
+    reconcile:
+      interval: "{{ .Values.infrastructureHealer.config.reconcileInterval }}"
+      dryRun: {{ .Values.infrastructureHealer.config.dryRun }}
+      maxActionsPerHour: {{ .Values.infrastructureHealer.config.maxActionsPerHour }}
+{{- end }}

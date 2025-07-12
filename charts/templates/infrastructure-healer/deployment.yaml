@@ -3,6 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "mlops-agent-stack.fullname" . }}-infrastructure-healer
+  namespace: {{ .Values.global.namespace.deployment }}
   labels:
     {{- include "mlops-agent-stack.labels" . | nindent 4 }}
     component: infrastructure-healer
@@ -36,6 +37,8 @@ spec:
           value: "{{ .Values.infrastructureHealer.config.dryRun }}"
         - name: MAX_ACTIONS_PER_HOUR
           value: "{{ .Values.infrastructureHealer.config.maxActionsPerHour }}"
+        - name: CONFIG_PATH
+          value: "/etc/infrastructure-healer/config.yaml"
         volumeMounts:
         - name: config
           mountPath: /etc/infrastructure-healer

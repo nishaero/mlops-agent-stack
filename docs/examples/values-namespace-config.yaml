@@ -1,0 +1,168 @@
+# Example Helm values.yaml for configuring MLOps Agent Stack
+# with namespace configuration and exclusion rules
+
+global:
+  # Namespace configuration
+  namespace:
+    # Namespace where the MLOps stack is deployed
+    deployment: "mlops-system"
+    # Create the deployment namespace if it doesn't exist
+    create: true
+    
+  # Global monitoring configuration - which namespaces to monitor
+  monitoring:
+    # List of namespaces to monitor for infrastructure healing
+    # If empty, all namespaces will be monitored (except excluded ones)
+    namespaces: 
+      - "default"
+      - "production" 
+      - "staging"
+      - "development"
+    
+    # Global exclusion rules - applies to all healing rules
+    exclusions:
+      # Exclude deployments with these labels
+      labels:
+        "mlops.ai/exclude": "true"
+        "app.kubernetes.io/managed-by": "external-operator"
+        "backup.kubernetes.io/exclude": "true"
+      
+      # Exclude deployments with these annotations  
+      annotations:
+        "deployment.kubernetes.io/exclude-healing": "true"
+        "helm.sh/hook": "test"
+        "mlops.ai/critical-service": "true"
+      
+      # Exclude deployments by name patterns (regex supported)
+      deploymentNames:
+        - "^kube-.*"        # Kubernetes system components
+        - "^coredns.*"      # DNS system
+        - "^calico-.*"      # Network CNI
+        - "^cilium-.*"      # Network CNI
+        - ".*-backup$"      # Backup jobs
+        - ".*-migration.*"  # Migration jobs
+        - ".*-restore$"     # Restore jobs
+        - "^external-.*"    # External services
+        - "^system-.*"      # System services
+      
+      # Exclude entire namespaces from monitoring
+      namespaces:
+        - "kube-system"
+        - "kube-public"
+        - "kube-node-lease"
+        - "cert-manager"
+        - "ingress-nginx"
+        - "metallb-system"
+        - "rook-ceph"
+
+# Infrastructure Healing Controller Configuration
+infrastructureHealer:
+  enabled: true
+  image:
+    repository: mlops/infra-healer
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  
+  config:
+    reconcileInterval: "30s"
+    dryRun: false
+    maxActionsPerHour: 10
+    
+    # Component-specific monitoring configuration
+    monitoring:
+      # Override global monitoring namespaces for this component
+      # If empty, uses global.monitoring.namespaces
+      namespaces: []
+      
+      # Component-specific exclusion rules (merged with global)
+      exclusions:
+        # Additional labels to exclude (merged with global)
+        labels:
+          "infrastructure-healer.mlops.ai/exclude": "true"
+        
+        # Additional annotations to exclude (merged with global)  
+        annotations:
+          "infrastructure-healer.mlops.ai/exclude": "true"
+        
+        # Additional deployment name patterns to exclude (merged with global)
+        deploymentNames:
+          - "^monitoring-.*"
+          - "^logging-.*"
+        
+        # Additional namespaces to exclude (merged with global)
+        namespaces:
+          - "monitoring"
+          - "logging"
+
+# Example configuration for different environments
+
+# Production environment example
+production:
+  global:
+    namespace:
+      deployment: "mlops-prod"
+    monitoring:
+      namespaces: 
+        - "production"
+      exclusions:
+        labels:
+          "mlops.ai/exclude": "true"
+          "environment": "critical"
+        deploymentNames:
+          - ".*-critical$"
+          - "^database-.*"
+  
+  infrastructureHealer:
+    config:
+      dryRun: false
+      maxActionsPerHour: 5  # More conservative in production
+
+# Staging environment example  
+staging:
+  global:
+    namespace:
+      deployment: "mlops-staging"
+    monitoring:
+      namespaces:
+        - "staging"
+        - "testing"
+      exclusions:
+        labels:
+          "mlops.ai/exclude": "true"
+        deploymentNames:
+          - ".*-test$"
+  
+  infrastructureHealer:
+    config:
+      dryRun: false
+      maxActionsPerHour: 15
+
+# Development environment example
+development:
+  global:
+    namespace:
+      deployment: "mlops-dev"
+    monitoring:
+      namespaces:
+        - "default"
+        - "development"
+      exclusions:
+        labels:
+          "mlops.ai/exclude": "true"
+        namespaces:
+          - "kube-system"
+  
+  infrastructureHealer:
+    config:
+      dryRun: true  # Safe defaults for development
+      maxActionsPerHour: 20

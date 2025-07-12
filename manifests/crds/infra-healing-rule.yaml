@@ -46,6 +46,30 @@ spec:
                     additionalProperties:
                       type: string
                     description: "Label selectors for target resources"
+                  exclusions:
+                    type: object
+                    description: "Rules for excluding resources from healing"
+                    properties:
+                      labels:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: "Exclude resources with these labels"
+                      annotations:
+                        type: object
+                        additionalProperties:
+                          type: string  
+                        description: "Exclude resources with these annotations"
+                      deploymentNames:
+                        type: array
+                        items:
+                          type: string
+                        description: "Exclude deployments matching these name patterns (regex supported)"
+                      namespaces:
+                        type: array
+                        items:
+                          type: string
+                        description: "Exclude these entire namespaces from healing"
               scaling:
                 type: object
                 properties:

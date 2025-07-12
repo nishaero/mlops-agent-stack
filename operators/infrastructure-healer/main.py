@@ -7,17 +7,22 @@ This component handles:
 - Automatic rollbacks for failed deployments
 - Resource optimization and adjustment
 - Integration with Cluster API for cloud-agnostic scaling
+- Namespace-aware monitoring and healing
+- Configurable exclusion rules for deployments
 """
 
 import asyncio
 import logging
 import os
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from statistics import mean
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+import yaml
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
@@ -34,6 +39,98 @@ OBSERVATION_DURATION = Histogram(
 CONFIDENCE_SCORE = Gauge("mlops_action_confidence", "Confidence score for healing actions", ["action_type"])
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ExclusionRules:
+    """Configuration for excluding resources from healing"""
+
+    labels: Dict[str, str] = field(default_factory=dict)
+    annotations: Dict[str, str] = field(default_factory=dict)
+    deployment_names: List[str] = field(default_factory=list)
+    namespaces: Set[str] = field(default_factory=set)
+
+    def matches_labels(self, resource_labels: Dict[str, str]) -> bool:
+        """Check if resource labels match exclusion criteria"""
+        if not self.labels:
+            return False
+
+        for key, value in self.labels.items():
+            if resource_labels.get(key) == value:
+                return True
+        return False
+
+    def matches_annotations(self, resource_annotations: Dict[str, str]) -> bool:
+        """Check if resource annotations match exclusion criteria"""
+        if not self.annotations:
+            return False
+
+        for key, value in self.annotations.items():
+            if resource_annotations.get(key) == value:
+                return True
+        return False
+
+    def matches_deployment_name(self, deployment_name: str) -> bool:
+        """Check if deployment name matches exclusion patterns"""
+        if not self.deployment_names:
+            return False
+
+        for pattern in self.deployment_names:
+            try:
+                if re.match(pattern, deployment_name):
+                    return True
+            except re.error:
+                # Treat invalid regex as literal string match
+                if pattern == deployment_name:
+                    return True
+        return False
+
+    def matches_namespace(self, namespace: str) -> bool:
+        """Check if namespace is excluded"""
+        return namespace in self.namespaces
+
+
+@dataclass
+class MonitoringConfig:
+    """Configuration for monitoring and healing"""
+
+    namespaces: List[str] = field(default_factory=list)  # Empty means all namespaces
+    exclusions: ExclusionRules = field(default_factory=ExclusionRules)
+
+    def should_monitor_namespace(self, namespace: str) -> bool:
+        """Check if we should monitor this namespace"""
+        # Check exclusions first
+        if self.exclusions.matches_namespace(namespace):
+            return False
+
+        # If no specific namespaces configured, monitor all (except excluded)
+        if not self.namespaces:
+            return True
+
+        # Otherwise only monitor specified namespaces
+        return namespace in self.namespaces
+
+    def should_heal_deployment(self, deployment) -> bool:
+        """Check if we should heal this deployment"""
+        # Check namespace first
+        if not self.should_monitor_namespace(deployment.metadata.namespace):
+            return False
+
+        # Check exclusion rules
+        labels = deployment.metadata.labels or {}
+        annotations = deployment.metadata.annotations or {}
+        name = deployment.metadata.name
+
+        if self.exclusions.matches_labels(labels):
+            return False
+
+        if self.exclusions.matches_annotations(annotations):
+            return False
+
+        if self.exclusions.matches_deployment_name(name):
+            return False
+
+        return True
 
 
 @dataclass
@@ -314,6 +411,9 @@ class InfrastructureHealer:
         self.dry_run_mode = os.getenv("DRY_RUN", "false").lower() == "true"
         self.observation_enabled = os.getenv("OBSERVATION_MODE", "true").lower() == "true"
 
+        # Load monitoring configuration
+        self.monitoring_config = self._load_monitoring_config()
+
         # Initialize Kubernetes client
         try:
             config.load_incluster_config()
@@ -336,6 +436,74 @@ class InfrastructureHealer:
         # Performance tracking
         self.deployment_cache = {}
         self.last_cache_update = datetime.now()
+
+    def _load_monitoring_config(self) -> MonitoringConfig:
+        """Load monitoring configuration from file or environment"""
+        config_path = os.getenv("CONFIG_PATH", "/etc/infrastructure-healer/config.yaml")
+
+        try:
+            if Path(config_path).exists():
+                with open(config_path, "r") as f:
+                    config_data = yaml.safe_load(f)
+
+                monitoring_data = config_data.get("monitoring", {})
+                exclusions_data = monitoring_data.get("exclusions", {})
+
+                # Convert namespace list to set for faster lookup
+                excluded_namespaces = set(exclusions_data.get("namespaces", []))
+
+                exclusions = ExclusionRules(
+                    labels=exclusions_data.get("labels", {}),
+                    annotations=exclusions_data.get("annotations", {}),
+                    deployment_names=exclusions_data.get("deploymentNames", []),
+                    namespaces=excluded_namespaces,
+                )
+
+                return MonitoringConfig(namespaces=monitoring_data.get("namespaces", []), exclusions=exclusions)
+            else:
+                logger.warning(f"Config file not found at {config_path}, using defaults")
+                return MonitoringConfig()
+
+        except Exception as e:
+            logger.error(f"Failed to load config from {config_path}: {e}")
+            return MonitoringConfig()
+
+    async def _should_heal_pod(self, pod) -> bool:
+        """Check if this pod should be healed based on monitoring configuration and exclusion rules"""
+        try:
+            namespace = pod.metadata.namespace
+
+            # Check if namespace should be monitored
+            if not self.monitoring_config.should_monitor_namespace(namespace):
+                return False
+
+            # Find the deployment for this pod to check exclusions
+            deployment = await self._get_deployment_for_pod(pod)
+            if deployment and not self.monitoring_config.should_heal_deployment(deployment):
+                return False
+
+            return True
+        except Exception as e:
+            logger.error(f"Error checking if pod {pod.metadata.name} should be healed: {e}")
+            return True  # Default to healing if we can't determine
+
+    async def _get_deployment_for_pod(self, pod):
+        """Get the deployment that owns this pod"""
+        try:
+            namespace = pod.metadata.namespace
+            owner_refs = pod.metadata.owner_references or []
+
+            for ref in owner_refs:
+                if ref.kind == "ReplicaSet":
+                    rs = await self.apps_v1.read_namespaced_replica_set(name=ref.name, namespace=namespace)
+                    for rs_ref in rs.metadata.owner_references or []:
+                        if rs_ref.kind == "Deployment":
+                            deployment = await self.apps_v1.read_namespaced_deployment(name=rs_ref.name, namespace=namespace)
+                            return deployment
+            return None
+        except Exception as e:
+            logger.error(f"Error finding deployment for pod {pod.metadata.name}: {e}")
+            return None
 
     async def get_healing_rules(self) -> List[Dict]:
         """Get all InfraHealingRule resources with caching"""
@@ -425,10 +593,30 @@ class InfrastructureHealer:
             return actions
 
         scope = spec.get("scope", {})
-        namespaces = scope.get("namespaces", ["default"])
+
+        # Get target namespaces from rule, with fallback to monitoring config
+        rule_namespaces = scope.get("namespaces", [])
+        if rule_namespaces:
+            # Filter rule namespaces through monitoring config
+            target_namespaces = [ns for ns in rule_namespaces if self.monitoring_config.should_monitor_namespace(ns)]
+        else:
+            # Use monitoring config namespaces or get all namespaces
+            if self.monitoring_config.namespaces:
+                target_namespaces = [
+                    ns for ns in self.monitoring_config.namespaces if self.monitoring_config.should_monitor_namespace(ns)
+                ]
+            else:
+                # Get all namespaces and filter through monitoring config
+                all_ns = await self.core_v1.list_namespace()
+                target_namespaces = [
+                    ns.metadata.name
+                    for ns in all_ns.items
+                    if self.monitoring_config.should_monitor_namespace(ns.metadata.name)
+                ]
+
         label_selector = self.build_label_selector(scope.get("labels", {}))
 
-        for namespace in namespaces:
+        for namespace in target_namespaces:
             try:
                 # Update cache for efficiency
                 await self.update_deployment_cache(namespace)
@@ -440,6 +628,10 @@ class InfrastructureHealer:
                 deployments = await self.apps_v1.list_namespaced_deployment(namespace=namespace, label_selector=label_selector)
 
                 for deployment in deployments.items:
+                    # Check if this deployment should be healed
+                    if not self.monitoring_config.should_heal_deployment(deployment):
+                        continue
+
                     action = await self.evaluate_deployment_scaling_with_observation(
                         deployment, scaling_config, rule, pod_analysis
                     )
@@ -538,14 +730,37 @@ class InfrastructureHealer:
         health_config = spec.get("healthChecks", {}).get("pods", {})
         scope = spec.get("scope", {})
 
-        namespaces = scope.get("namespaces", ["default"])
+        # Get target namespaces from rule, with fallback to monitoring config
+        rule_namespaces = scope.get("namespaces", [])
+        if rule_namespaces:
+            # Filter rule namespaces through monitoring config
+            target_namespaces = [ns for ns in rule_namespaces if self.monitoring_config.should_monitor_namespace(ns)]
+        else:
+            # Use monitoring config namespaces or get all namespaces
+            if self.monitoring_config.namespaces:
+                target_namespaces = [
+                    ns for ns in self.monitoring_config.namespaces if self.monitoring_config.should_monitor_namespace(ns)
+                ]
+            else:
+                # Get all namespaces and filter through monitoring config
+                all_ns = await self.core_v1.list_namespace()
+                target_namespaces = [
+                    ns.metadata.name
+                    for ns in all_ns.items
+                    if self.monitoring_config.should_monitor_namespace(ns.metadata.name)
+                ]
+
         label_selector = self.build_label_selector(scope.get("labels", {}))
 
-        for namespace in namespaces:
+        for namespace in target_namespaces:
             try:
                 pods = await self.core_v1.list_namespaced_pod(namespace=namespace, label_selector=label_selector)
 
                 for pod in pods.items:
+                    # Check if this pod's deployment should be healed
+                    if not await self._should_heal_pod(pod):
+                        continue
+
                     # First observe the pod to collect metrics
                     await self.observer.observe_pod(pod, namespace)
 

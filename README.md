@@ -616,6 +616,160 @@ Key settings:
 - Security policies
 - Monitoring settings
 
+### 🎯 Namespace Configuration & Exclusion Rules
+
+The MLOps Agent Stack provides powerful configuration options to control deployment namespaces, monitoring scope, and exclusion rules to prevent healing actions on critical or sensitive deployments.
+
+#### Deployment Namespace Configuration
+
+Configure where the MLOps stack components are deployed:
+
+```yaml
+global:
+  namespace:
+    # Namespace where MLOps stack is deployed
+    deployment: "mlops-system"
+    # Create the namespace if it doesn't exist
+    create: true
+```
+
+#### Monitoring Scope Configuration
+
+Control which namespaces are monitored for infrastructure healing:
+
+```yaml
+global:
+  monitoring:
+    # Specific namespaces to monitor (empty = all namespaces)
+    namespaces: 
+      - "production"
+      - "staging"
+      - "default"
+    
+    # Global exclusion rules
+    exclusions:
+      # Exclude deployments with specific labels
+      labels:
+        "mlops.ai/exclude": "true"
+        "app.kubernetes.io/managed-by": "external-operator"
+      
+      # Exclude deployments with specific annotations
+      annotations:
+        "deployment.kubernetes.io/exclude-healing": "true"
+        "helm.sh/hook": "test"
+      
+      # Exclude deployments by name patterns (regex supported)
+      deploymentNames:
+        - "^kube-.*"        # Kubernetes system components
+        - "^system-.*"      # System services
+        - ".*-backup$"      # Backup jobs
+        - ".*-migration.*"  # Migration jobs
+      
+      # Exclude entire namespaces
+      namespaces:
+        - "kube-system"
+        - "cert-manager"
+        - "ingress-nginx"
+```
+
+#### Component-Specific Configuration
+
+Override global settings for individual components:
+
+```yaml
+infrastructureHealer:
+  config:
+    monitoring:
+      # Component-specific namespace monitoring (overrides global)
+      namespaces: ["production"]
+      
+      # Additional exclusions (merged with global)
+      exclusions:
+        labels:
+          "infrastructure-healer.mlops.ai/exclude": "true"
+        deploymentNames:
+          - "^database-.*"
+```
+
+#### InfraHealingRule CRD Exclusions
+
+Configure exclusions in custom healing rules:
+
+```yaml
+apiVersion: mlops.ai/v1
+kind: InfraHealingRule
+metadata:
+  name: production-healing
+spec:
+  scope:
+    namespaces: ["production"]
+    
+    # Rule-specific exclusions
+    exclusions:
+      labels:
+        "critical-service": "true"
+      annotations:
+        "deployment.kubernetes.io/exclude-healing": "true"
+      deploymentNames:
+        - "^database-.*"
+        - ".*-critical$"
+      namespaces:
+        - "monitoring"
+```
+
+#### Example Use Cases
+
+**1. Production Environment - Conservative Healing**
+```yaml
+global:
+  monitoring:
+    namespaces: ["production"]
+    exclusions:
+      labels:
+        "environment": "critical"
+      deploymentNames:
+        - "^database-.*"
+        - "^auth-.*"
+        - ".*-critical$"
+
+infrastructureHealer:
+  config:
+    dryRun: false
+    maxActionsPerHour: 5  # Conservative rate limiting
+```
+
+**2. Development Environment - Permissive Healing**
+```yaml
+global:
+  monitoring:
+    namespaces: ["default", "development"]
+    exclusions:
+      namespaces: ["kube-system"]
+
+infrastructureHealer:
+  config:
+    dryRun: true  # Safe defaults for development
+    maxActionsPerHour: 20
+```
+
+**3. Multi-Tenant Environment - Namespace Isolation**
+```yaml
+global:
+  monitoring:
+    namespaces: 
+      - "tenant-a"
+      - "tenant-b"
+    exclusions:
+      labels:
+        "tenant.kubernetes.io/exclude": "true"
+      annotations:
+        "tenant.kubernetes.io/critical": "true"
+```
+
+For more examples, see:
+- [Example Helm Values](docs/examples/values-namespace-config.yaml)
+- [Example InfraHealingRules](docs/examples/infra-healing-rule-examples.yaml)
+
 ## 🔒 Security Features
 
 ### Policy Enforcement

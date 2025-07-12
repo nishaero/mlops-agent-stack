@@ -12,6 +12,44 @@ global:
   clusterName: "mlops-prod"
   region: "us-west-2"
   
+  # Namespace configuration
+  namespace:
+    # Namespace where the MLOps stack is deployed
+    deployment: "mlops-system"
+    # Create the deployment namespace if it doesn't exist
+    create: true
+    
+  # Monitoring configuration - which namespaces to monitor
+  monitoring:
+    # List of namespaces to monitor for infrastructure healing
+    # If empty, all namespaces will be monitored
+    namespaces: []
+    # Examples:
+    # namespaces: ["default", "production", "staging"]
+    
+    # Global exclusion rules - applies to all healing rules
+    exclusions:
+      # Exclude deployments with these labels
+      labels: {}
+      # Example: 
+      # labels:
+      #   "mlops.ai/exclude": "true"
+      #   "app.kubernetes.io/managed-by": "helm"
+      
+      # Exclude deployments with these annotations  
+      annotations: {}
+      # Example:
+      # annotations:
+      #   "deployment.kubernetes.io/exclude-healing": "true"
+      
+      # Exclude deployments by name patterns (regex supported)
+      deploymentNames: []
+      # Example:
+      # deploymentNames: ["^kube-.*", ".*-system$", "external-.*"]
+      
+      # Exclude entire namespaces from monitoring
+      namespaces: ["kube-system", "kube-public", "kube-node-lease"]
+  
   # High availability settings
   affinity:
     podAntiAffinity:
@@ -207,6 +245,23 @@ infrastructureHealer:
     reconcileInterval: "30s"
     dryRun: false
     maxActionsPerHour: 10
+    
+    # Namespace-specific configuration
+    monitoring:
+      # Override global monitoring namespaces for this component
+      # If empty, uses global.monitoring.namespaces
+      namespaces: []
+      
+      # Component-specific exclusion rules
+      exclusions:
+        # Additional labels to exclude (merged with global)
+        labels: {}
+        # Additional annotations to exclude (merged with global)  
+        annotations: {}
+        # Additional deployment name patterns to exclude (merged with global)
+        deploymentNames: []
+        # Additional namespaces to exclude (merged with global)
+        namespaces: []
 
 # Code Autofix Controller
 codeAutofix:
