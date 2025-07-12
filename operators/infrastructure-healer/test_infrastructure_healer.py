@@ -68,9 +68,7 @@ class TestObservationWindow(unittest.TestCase):
 
         # Add metrics with increasing restart count
         for i in range(5):
-            metric = PodMetrics(
-                timestamp=base_time + timedelta(minutes=i), restart_count=i
-            )
+            metric = PodMetrics(timestamp=base_time + timedelta(minutes=i), restart_count=i)
             self.window.add_metric(metric)
 
         slope, confidence = self.window.get_trend("restart_count", window_minutes=10)
@@ -122,9 +120,7 @@ class TestPodObserver(unittest.TestCase):
         """Test cleanup of old observation data"""
         # Add old observation
         old_window = ObservationWindow("test/old-pod")
-        old_metric = PodMetrics(
-            timestamp=datetime.now() - timedelta(hours=25), restart_count=1
-        )
+        old_metric = PodMetrics(timestamp=datetime.now() - timedelta(hours=25), restart_count=1)
         old_window.add_metric(old_metric)
         self.observer.observations["test/old-pod"] = old_window
 
@@ -150,9 +146,7 @@ class TestActionPlanner(unittest.TestCase):
 
     def test_calculate_scaling_confidence(self):
         """Test scaling confidence calculation"""
-        confidence = self.planner.calculate_scaling_confidence(
-            "test-deployment", "default", 2, 4
-        )
+        confidence = self.planner.calculate_scaling_confidence("test-deployment", "default", 2, 4)
         self.assertGreaterEqual(confidence, 0.1)
         self.assertLessEqual(confidence, 1.0)
 

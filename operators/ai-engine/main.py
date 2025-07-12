@@ -25,15 +25,9 @@ from kubernetes.client.rest import ApiException
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 # Metrics
-ANOMALIES_DETECTED = Counter(
-    "mlops_anomalies_detected_total", "Total anomalies detected", ["type", "severity"]
-)
-ANALYSIS_DURATION = Histogram(
-    "mlops_analysis_duration_seconds", "Time spent analyzing data", ["model_type"]
-)
-ACTIVE_MODELS = Gauge(
-    "mlops_active_models", "Number of active AI models", ["model_type"]
-)
+ANOMALIES_DETECTED = Counter("mlops_anomalies_detected_total", "Total anomalies detected", ["type", "severity"])
+ANALYSIS_DURATION = Histogram("mlops_analysis_duration_seconds", "Time spent analyzing data", ["model_type"])
+ACTIVE_MODELS = Gauge("mlops_active_models", "Number of active AI models", ["model_type"])
 
 logger = logging.getLogger(__name__)
 
@@ -140,9 +134,7 @@ class AIAnalysisEngine:
             anomaly_path = f"{self.models_path}/anomaly-lstm/model.pt"
             if os.path.exists(anomaly_path):
                 self.anomaly_model = AnomalyDetectionModel(input_size=5)
-                self.anomaly_model.load_state_dict(
-                    torch.load(anomaly_path, map_location="cpu")
-                )
+                self.anomaly_model.load_state_dict(torch.load(anomaly_path, map_location="cpu"))
                 self.anomaly_model.eval()
                 ACTIVE_MODELS.labels(model_type="anomaly").set(1)
                 logger.info("Loaded anomaly detection model")
@@ -159,9 +151,7 @@ class AIAnalysisEngine:
         except Exception as e:
             logger.error(f"Failed to load models: {e}")
 
-    async def fetch_metrics(
-        self, query: str, start_time: datetime, end_time: datetime
-    ) -> List[Dict]:
+    async def fetch_metrics(self, query: str, start_time: datetime, end_time: datetime) -> List[Dict]:
         """Fetch metrics from Prometheus"""
         params = {
             "query": query,
@@ -180,9 +170,7 @@ class AIAnalysisEngine:
                 logger.error(f"Failed to fetch metrics: {e}")
                 return []
 
-    async def fetch_logs(
-        self, query: str, start_time: datetime, end_time: datetime
-    ) -> List[Dict]:
+    async def fetch_logs(self, query: str, start_time: datetime, end_time: datetime) -> List[Dict]:
         """Fetch logs from Loki"""
         params = {
             "query": str(query),
@@ -257,17 +245,11 @@ class AIAnalysisEngine:
                         confidence = min(diff / (actual + 1e-6), 1.0)
 
                         if confidence > 0.7:  # High confidence anomaly
-                            severity = (
-                                "critical"
-                                if confidence > 0.9
-                                else "high" if confidence > 0.8 else "medium"
-                            )
+                            severity = "critical" if confidence > 0.9 else "high" if confidence > 0.8 else "medium"
 
                             result = AnomalyResult(
                                 timestamp=datetime.now(),
-                                metric_name=metric.get("metric", {}).get(
-                                    "__name__", "unknown"
-                                ),
+                                metric_name=metric.get("metric", {}).get("__name__", "unknown"),
                                 severity=severity,
                                 confidence=confidence,
                                 predicted_value=pred.item(),
@@ -277,18 +259,12 @@ class AIAnalysisEngine:
                                     "sequence_analysis": {
                                         "mean": np.mean(values),
                                         "std": np.std(values),
-                                        "trend": (
-                                            "increasing"
-                                            if values[-1] > values[0]
-                                            else "decreasing"
-                                        ),
+                                        "trend": ("increasing" if values[-1] > values[0] else "decreasing"),
                                     },
                                 },
                             )
                             results.append(result)
-                            ANOMALIES_DETECTED.labels(
-                                type="metric", severity=severity
-                            ).inc()
+                            ANOMALIES_DETECTED.labels(type="metric", severity=severity).inc()
 
                 except Exception as e:
                     logger.error(f"Error analyzing metric {metric}: {e}")
@@ -314,40 +290,22 @@ class AIAnalysisEngine:
                     confidence = 0.0
                     suggested_action = "Monitor and investigate"
 
-                    if any(
-                        keyword in message.lower()
-                        for keyword in ["oom", "out of memory"]
-                    ):
+                    if any(keyword in message.lower() for keyword in ["oom", "out of memory"]):
                         error_category = "OOMKilled"
                         confidence = 0.9
-                        suggested_action = (
-                            "Increase memory limits or optimize memory usage"
-                        )
-                    elif any(
-                        keyword in message.lower()
-                        for keyword in ["crashloopbackoff", "crash loop"]
-                    ):
+                        suggested_action = "Increase memory limits or optimize memory usage"
+                    elif any(keyword in message.lower() for keyword in ["crashloopbackoff", "crash loop"]):
                         error_category = "CrashLoopBackOff"
                         confidence = 0.85
-                        suggested_action = (
-                            "Check application startup logic and dependencies"
-                        )
-                    elif any(
-                        keyword in message.lower()
-                        for keyword in ["imagepullbackoff", "image pull"]
-                    ):
+                        suggested_action = "Check application startup logic and dependencies"
+                    elif any(keyword in message.lower() for keyword in ["imagepullbackoff", "image pull"]):
                         error_category = "ImagePullBackOff"
                         confidence = 0.8
                         suggested_action = "Verify image name and registry credentials"
-                    elif any(
-                        keyword in message.lower()
-                        for keyword in ["connection refused", "network"]
-                    ):
+                    elif any(keyword in message.lower() for keyword in ["connection refused", "network"]):
                         error_category = "NetworkError"
                         confidence = 0.75
-                        suggested_action = (
-                            "Check network policies and service configurations"
-                        )
+                        suggested_action = "Check network policies and service configurations"
 
                     if confidence > 0.5:  # Only report significant errors
                         result = LogAnalysisResult(
@@ -359,9 +317,7 @@ class AIAnalysisEngine:
                             related_pods=[labels.get("pod", "unknown")],
                         )
                         results.append(result)
-                        ANOMALIES_DETECTED.labels(
-                            type="log", severity=error_category
-                        ).inc()
+                        ANOMALIES_DETECTED.labels(type="log", severity=error_category).inc()
 
                 except Exception as e:
                     logger.error(f"Error analyzing log {log_entry}: {e}")
@@ -504,12 +460,8 @@ class AIAnalysisEngine:
 
         try:
             # Fetch metrics data
-            cpu_metrics = await self.fetch_metrics(
-                "rate(container_cpu_usage_seconds_total[5m])", start_time, end_time
-            )
-            memory_metrics = await self.fetch_metrics(
-                "container_memory_usage_bytes", start_time, end_time
-            )
+            cpu_metrics = await self.fetch_metrics("rate(container_cpu_usage_seconds_total[5m])", start_time, end_time)
+            memory_metrics = await self.fetch_metrics("container_memory_usage_bytes", start_time, end_time)
 
             # Fetch logs data
             error_logs = await self.fetch_logs('{level="error"}', start_time, end_time)
@@ -530,9 +482,7 @@ class AIAnalysisEngine:
                     await self.create_autofix_policy(issue)
                     logger.warning(f"Log issue detected: {issue}")
 
-            logger.info(
-                f"Analysis complete: {len(cpu_anomalies + memory_anomalies)} anomalies, {len(log_issues)} log issues"
-            )
+            logger.info(f"Analysis complete: {len(cpu_anomalies + memory_anomalies)} anomalies, {len(log_issues)} log issues")
 
         except Exception as e:
             logger.error(f"Analysis cycle failed: {e}")

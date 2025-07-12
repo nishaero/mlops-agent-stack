@@ -31,12 +31,8 @@ FIXES_GENERATED = Counter(
     "Total code fixes generated",
     ["language", "error_type"],
 )
-FIX_DURATION = Histogram(
-    "mlops_fix_generation_duration_seconds", "Time spent generating fixes"
-)
-ACTIVE_POLICIES = Gauge(
-    "mlops_active_autofix_policies", "Number of active autofix policies"
-)
+FIX_DURATION = Histogram("mlops_fix_generation_duration_seconds", "Time spent generating fixes")
+ACTIVE_POLICIES = Gauge("mlops_active_autofix_policies", "Number of active autofix policies")
 PRS_CREATED = Counter(
     "mlops_pull_requests_created_total",
     "Total pull requests created",
@@ -93,9 +89,7 @@ class GitHubClient:
                 else:
                     raise Exception(f"Failed to create fork: {response.status}")
 
-    async def create_branch(
-        self, owner: str, repo: str, branch_name: str, base_sha: str
-    ) -> Dict:
+    async def create_branch(self, owner: str, repo: str, branch_name: str, base_sha: str) -> Dict:
         """Create a new branch"""
         async with aiohttp.ClientSession() as session:
             url = f"{self.base_url}/repos/{owner}/{repo}/git/refs"
@@ -156,9 +150,7 @@ class CodeLLMClient:
     def __init__(self, model_endpoint: str = "http://codellama-service:8080"):
         self.model_endpoint = model_endpoint
 
-    async def generate_fix(
-        self, error_message: str, code_context: str, file_path: str, line_number: int
-    ) -> FixResult:
+    async def generate_fix(self, error_message: str, code_context: str, file_path: str, line_number: int) -> FixResult:
         """Generate a code fix using the LLM"""
 
         # Construct prompt for code fixing
@@ -199,9 +191,7 @@ Response format (JSON):
                     "stop": ["```"],
                 }
 
-                async with session.post(
-                    f"{self.model_endpoint}/generate", json=payload
-                ) as response:
+                async with session.post(f"{self.model_endpoint}/generate", json=payload) as response:
                     if response.status == 200:
                         result = await response.json()
                         generated_text = result.get("text", "")
@@ -219,9 +209,7 @@ Response format (JSON):
                             )
                         except json.JSONDecodeError:
                             # Fallback to simple text parsing
-                            return self.parse_text_response(
-                                generated_text, code_context
-                            )
+                            return self.parse_text_response(generated_text, code_context)
                     else:
                         logger.error(f"LLM API error: {response.status}")
                         return self.create_fallback_fix(error_message, code_context)
@@ -244,10 +232,7 @@ Response format (JSON):
 
     def create_fallback_fix(self, error_message: str, code_context: str) -> FixResult:
         """Create a simple fallback fix"""
-        if (
-            "null pointer" in error_message.lower()
-            or "nullpointerexception" in error_message.lower()
-        ):
+        if "null pointer" in error_message.lower() or "nullpointerexception" in error_message.lower():
             fixed_code = code_context.replace("object.", "if (object != null) object.")
             explanation = "Added null check to prevent NullPointerException"
             risk_level = "low"
@@ -275,9 +260,7 @@ class CodeAutofixOperator:
         self.reconcile_interval = int(os.getenv("RECONCILE_INTERVAL", "60"))
 
         # Initialize clients
-        self.github_client = (
-            GitHubClient(self.github_token) if self.github_token else None
-        )
+        self.github_client = GitHubClient(self.github_token) if self.github_token else None
         self.llm_client = CodeLLMClient()
 
         # Initialize Kubernetes client
@@ -297,9 +280,7 @@ class CodeAutofixOperator:
     def get_secret_value(self, secret_name: str, key: str) -> Optional[str]:
         """Get value from Kubernetes secret"""
         try:
-            secret = self.core_v1.read_namespaced_secret(
-                name=secret_name, namespace=os.getenv("NAMESPACE", "default")
-            )
+            secret = self.core_v1.read_namespaced_secret(name=secret_name, namespace=os.getenv("NAMESPACE", "default"))
             return secret.data.get(key, b"").decode("utf-8")
         except Exception as e:
             logger.warning(f"Failed to get secret {secret_name}/{key}: {e}")
@@ -338,24 +319,18 @@ class CodeAutofixOperator:
                     )
 
                     # Parse logs for code-related errors
-                    parsed_issues = self.parse_logs_for_issues(
-                        logs, pod.metadata.labels
-                    )
+                    parsed_issues = self.parse_logs_for_issues(logs, pod.metadata.labels)
                     issues.extend(parsed_issues)
 
                 except Exception as e:
-                    logger.debug(
-                        f"Could not read logs for pod {pod.metadata.name}: {e}"
-                    )
+                    logger.debug(f"Could not read logs for pod {pod.metadata.name}: {e}")
 
         except Exception as e:
             logger.error(f"Failed to detect code issues from logs: {e}")
 
         return issues
 
-    def parse_logs_for_issues(
-        self, logs: str, pod_labels: Dict[str, str]
-    ) -> List[CodeIssue]:
+    def parse_logs_for_issues(self, logs: str, pod_labels: Dict[str, str]) -> List[CodeIssue]:
         """Parse log text to extract code issues"""
         issues = []
         lines = logs.split("\n")
@@ -375,9 +350,7 @@ class CodeAutofixOperator:
                 ]
             ):
                 # Extract file and line information from stack traces
-                file_path, line_number = self.extract_location_from_stacktrace(
-                    lines[i : i + 10]
-                )
+                file_path, line_number = self.extract_location_from_stacktrace(lines[i : i + 10])
 
                 if file_path:
                     issue = CodeIssue(
@@ -417,11 +390,7 @@ class CodeAutofixOperator:
                     file_start = line.index('File "') + 6
                     file_end = line.index('", line')
                     line_start = line.index(", line ") + 7
-                    line_end = (
-                        line.index(",", line_start)
-                        if "," in line[line_start:]
-                        else len(line)
-                    )
+                    line_end = line.index(",", line_start) if "," in line[line_start:] else len(line)
 
                     file_path = line[file_start:file_end]
                     line_number = int(line[line_start:line_end])
@@ -461,9 +430,7 @@ class CodeAutofixOperator:
         else:
             return "low"
 
-    async def generate_fix_for_issue(
-        self, issue: CodeIssue, repository_config: Dict
-    ) -> Optional[FixResult]:
+    async def generate_fix_for_issue(self, issue: CodeIssue, repository_config: Dict) -> Optional[FixResult]:
         """Generate a fix for a specific code issue"""
         try:
             # Clone repository to get code context
@@ -505,9 +472,7 @@ class CodeAutofixOperator:
                 return fix_result
 
         except Exception as e:
-            logger.error(
-                f"Failed to generate fix for issue {issue.file_path}:{issue.line_number}: {e}"
-            )
+            logger.error(f"Failed to generate fix for issue {issue.file_path}:{issue.line_number}: {e}")
             return None
 
     def detect_language(self, file_path: str) -> str:
@@ -541,11 +506,7 @@ class CodeAutofixOperator:
                 return False
 
             # Extract owner and repo name
-            url_parts = (
-                repo_url.replace("https://github.com/", "")
-                .replace(".git", "")
-                .split("/")
-            )
+            url_parts = repo_url.replace("https://github.com/", "").replace(".git", "").split("/")
             if len(url_parts) != 2:
                 logger.error(f"Invalid GitHub URL format: {repo_url}")
                 return False
@@ -564,9 +525,7 @@ class CodeAutofixOperator:
 
             if self.github_client:
                 # Create branch
-                await self.github_client.create_branch(
-                    owner, repo_name, branch_name, base_sha
-                )
+                await self.github_client.create_branch(owner, repo_name, branch_name, base_sha)
 
                 # Update file with fix
                 import base64
@@ -624,9 +583,7 @@ class CodeAutofixOperator:
 
         except Exception as e:
             logger.error(f"Failed to create PR for fix: {e}")
-            PRS_CREATED.labels(
-                repository=repository_config.get("url", "unknown"), status="failed"
-            ).inc()
+            PRS_CREATED.labels(repository=repository_config.get("url", "unknown"), status="failed").inc()
             return False
 
     async def process_autofix_policies(self):
@@ -650,31 +607,21 @@ class CodeAutofixOperator:
                     allowed_paths = repo_config.get("allowedPaths", [])
                     excluded_paths = repo_config.get("excludedPaths", [])
 
-                    filtered_issues = self.filter_issues_by_paths(
-                        detected_issues, allowed_paths, excluded_paths
-                    )
+                    filtered_issues = self.filter_issues_by_paths(detected_issues, allowed_paths, excluded_paths)
 
                     # Generate fixes for high-confidence issues
                     for issue in filtered_issues[:5]:  # Limit concurrent fixes
                         if issue.severity in ["high", "critical"]:
-                            fix_result = await self.generate_fix_for_issue(
-                                issue, repo_config
-                            )
+                            fix_result = await self.generate_fix_for_issue(issue, repo_config)
 
                             if fix_result and fix_result.confidence > 0.7:
                                 # Check risk assessment
-                                risk_assessment = policy.get("spec", {}).get(
-                                    "riskAssessment", {}
-                                )
+                                risk_assessment = policy.get("spec", {}).get("riskAssessment", {})
                                 if self.should_create_pr(fix_result, risk_assessment):
-                                    await self.create_pull_request_with_fix(
-                                        issue, fix_result, repo_config, policy
-                                    )
+                                    await self.create_pull_request_with_fix(issue, fix_result, repo_config, policy)
 
             except Exception as e:
-                logger.error(
-                    f"Failed to process policy {policy.get('metadata', {}).get('name', 'unknown')}: {e}"
-                )
+                logger.error(f"Failed to process policy {policy.get('metadata', {}).get('name', 'unknown')}: {e}")
 
     def filter_issues_by_paths(
         self,
