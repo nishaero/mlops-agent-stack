@@ -1,4 +1,4 @@
-{{- if .Values.security.gatekeeper.enabled }}
+{{- if and .Values.security.gatekeeper.enabled (not .Values.testing.enabled) }}
 ---
 # Constraint Template for Required Security Context
 apiVersion: templates.gatekeeper.sh/v1beta1
