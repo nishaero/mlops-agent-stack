@@ -17,27 +17,7 @@ sources:
 maintainers:
   - name: Nishant Ravi
     email: nishant@example.com
-dependencies:
-  - name: prometheus
-    version: "25.8.0"
-    repository: "https://prometheus-community.github.io/helm-charts"
-    condition: dataCollection.prometheus.enabled
-  - name: loki
-    version: "5.41.4"
-    repository: "https://grafana.github.io/helm-charts"
-    condition: dataCollection.loki.enabled
-  - name: opentelemetry-collector
-    version: "0.81.0"
-    repository: "https://open-telemetry.github.io/opentelemetry-helm-charts"
-    condition: dataCollection.opentelemetry.enabled
-  - name: argo-workflows
-    version: "0.40.8"
-    repository: "https://argoproj.github.io/argo-helm"
-    condition: gitops.argoWorkflows.enabled
-  - name: flux2
-    version: "2.12.1"
-    repository: "https://fluxcd-community.github.io/helm-charts"
-    condition: gitops.flux.enabled
+dependencies: []
 annotations:
   category: MLOps
   licenses: MIT

@@ -134,7 +134,7 @@ jobs:
         tags: |
           type=ref,event=branch
           type=ref,event=pr
-          type=sha,prefix={{branch}}-
+          type=sha,prefix={{date 'YYYYMMDD'}}-
           type=raw,value=latest,enable={{is_default_branch}}
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
@@ -193,14 +193,6 @@ jobs:
       uses: helm/kind-action@v1.8.0
       with:
         cluster_name: test-cluster
-        config: |
-          kind: Cluster
-          apiVersion: kind.x-k8s.io/v1alpha4
-          nodes:
-          - role: control-plane
-            extraMounts:
-            - hostPath: /tmp
-              containerPath: /tmp
     
     - name: Helm dependency update
       run: |
